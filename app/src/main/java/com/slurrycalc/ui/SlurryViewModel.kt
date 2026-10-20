@@ -97,12 +97,12 @@ class SlurryViewModel : ViewModel() {
         recalculate()
     }
 
-    fun setBatchMode(mode: Int) {
+    fun selectBatchMode(mode: Int) {
         batchMode = mode
         recalculate()
     }
 
-    fun setBatchValue(v: Double) {
+    fun updateBatchValue(v: Double) {
         batchValue = v.coerceAtLeast(0.0)
         recalculate()
     }

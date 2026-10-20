@@ -209,12 +209,12 @@ private fun BatchCard(vm: SlurryViewModel) {
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("масса суспензии, г", "масса сухого, г", "объём, мл").forEachIndexed { i, label ->
-                FilterChip(selected = vm.batchMode == i, onClick = { vm.setBatchMode(i) }, label = { Text(label) })
+                FilterChip(selected = vm.batchMode == i, onClick = { vm.selectBatchMode(i) }, label = { Text(label) })
             }
         }
         Spacer(Modifier.height(8.dp))
         var bv by remember(vm.batchValue) { mutableStateOf(fmt(vm.batchValue, 0)) }
-        NumberField(bv, { bv = it; parseD(it)?.let { v -> vm.setBatchValue(v) } }, "Значение партии", Modifier.fillMaxWidth())
+        NumberField(bv, { bv = it; parseD(it)?.let { v -> vm.updateBatchValue(v) } }, "Значение партии", Modifier.fillMaxWidth())
     }
 }
 
