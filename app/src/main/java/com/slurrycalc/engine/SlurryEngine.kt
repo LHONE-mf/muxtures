@@ -5,11 +5,15 @@ package com.slurrycalc.engine
  * @param name   название компонента
  * @param density истинская плотность, г/см³
  * @param fraction массовая доля компонента в СУХОМ веществе (0..1)
+ * @param materialId ссылка на запись базы материалов (null — ручной ввод)
+ * @param role роль материала (для подсказок); null — неизвестно
  */
 data class SolidComponent(
     val name: String,
     val density: Double,
     val fraction: Double,
+    val materialId: Long? = null,
+    val role: MaterialRole? = null,
 )
 
 /**
