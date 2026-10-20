@@ -1,84 +1,257 @@
 package com.slurrycalc.engine
 
-/**
- * Режимы диспергирования/смешивания. Типовой порядок для катодной суспензии:
- * pre-mix сухих (AM+CB) → растворение связующего → wet-mix → финишный перетир → дегазация.
- */
-data class MixingRegime(
-    val id: String,
-    val name: String,
-    /** Planetary / Magnetic / Three-roll / Ultrasonic / Vacuum / Manual */
-    val method: String,
-    /** ориентировочные параметры инструмента (текст-подсказка) */
-    val tipSpeedHint: String,
-    private val timeMinFirst: Int,
-    private val timeMinLast: Int,
-    /** ограничение температуры суспензии при обработке, °C (null — не нормируется) */
-    val tempLimitC: Double?,
-    val description: String,
-    /** 1 = предсмесь, 2 = связующее, 3 = основная масса, 4 = финиш */
-    val stageOrder: Int,
-) {
-    val timeHint: String get() = "$timeMinFirst–$timeMinLast мин"
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** Тип инструмента/оборудования этапа смешивания */
+enum class MixToolType(val label: String) {
+    MANUAL("Ручная лопатка"),
+    MAGNETIC("Магнитная мешалка"),
+    PLANETARY("Планетарный диспергатор"),
+    DISC("Диспергатор (ротор-статор)"),
+    THREE_ROLL("Трёхвальцовая мельница"),
+    ULTRASONIC("УЗ-зонд"),
+    VACUUM("Вакуум / дегазация"),
+    OTHER("Другое");
+
+    companion object {
+        fun fromName(n: String?): MixToolType =
+            entries.firstOrNull { it.name == n } ?: OTHER
+    }
 }
 
-object MixingRegimes {
+/**
+ * Этап смешивания внутри замеса: действие + режим оборудования.
+ * Примеры: «Растворение PVDF в NMP» (магнитная, 600 об/мин),
+ * «Ввод Super P» (планетарная, 1500/400 об/мин), «Перетир» (3-вальцы, зазор 8 мкм).
+ */
+data class MixingStep(
+    val id: Long = 0L,
+    /** что делаем: растворение связующего, ввод сажи, ввод AM, перетир, дегазация… */
+    val action: String = "",
+    val tool: MixToolType = MixToolType.PLANETARY,
+    /** обороты диспергатора (ротора/пальца), об/мин */
+    val disperserRpm: Int? = null,
+    /** обороты лопастей/чашки (для планетарных машин), об/мин */
+    val bladeRpm: Int? = null,
+    /** длительность этапа, мин */
+    val durationMin: Double? = null,
+    /** температура суспензии на этапе, °C (замер или ограничение) */
+    val tempC: Double? = null,
+    /** комментарий по выполняемым действиям (что и как вносим, контроль готовности) */
+    val comment: String = "",
+) {
+    fun rpmLabel(): String {
+        val d = disperserRpm?.let { "дисп. ${it} об/мин" }
+        val b = bladeRpm?.let { "лопасти ${it} об/мин" }
+        return listOfNotNull(d, b).joinToString(" · ")
+    }
+}
 
-    val ALL: List<MixingRegime> = listOf(
-        MixingRegime(
-            "manual_beaker", "Ручное (стакан + лопатка)", "Manual",
+/**
+ * Сохранённый пользовательский режим смешивания (пресет параметров этапа),
+ * добавляется вручную из карточки режима.
+ */
+data class CustomRegime(
+    val id: String,
+    val name: String,
+    val tool: MixToolType,
+    val disperserRpmHint: Int? = null,
+    val bladeRpmHint: Int? = null,
+    val timeMinHint: Double? = null,
+    val tempLimitC: Double? = null,
+    val description: String = "",
+)
+
+/** Встроенные режимы: метод, ориентиры по оборотам, время, T° */
+object BuiltinRegimes {
+    data class Info(
+        val name: String,
+        val tool: MixToolType,
+        val tipSpeedHint: String,
+        val timeMinFirst: Int,
+        val timeMinLast: Int,
+        val tempLimitC: Double?,
+        val description: String,
+    )
+
+    val ALL: Map<String, Info> = linkedMapOf(
+        "manual_beaker" to Info(
+            "Ручное (стакан + лопатка)", MixToolType.MANUAL,
             "вручную, ~1 м/с", 15, 30, null,
-            "Для пробников <100 г. Однородность низкая, агломераты сохраняются.", 3,
+            "Для пробников <100 г. Однородность низкая, агломераты сохраняются.",
         ),
-        MixingRegime(
-            "magnetic", "Магнитная мешалка", "Magnetic",
-            "500–1500 об/мин", 20, 60, null,
-            "Хороша для растворения PVDF и разбавленных составов; для высокого φ слаба.", 2,
+        "magnetic" to Info(
+            "Магнитная мешалка", MixToolType.MAGNETIC,
+            "300–1500 об/мин", 20, 60, null,
+            "Хороша для растворения PVDF и разбавленных составов; для высокого φ слаба.",
         ),
-        MixingRegime(
-            "planetary_low", "Планетарная (низкая скорость)", "Planetary",
-            "~10 м/с (≈1200 об/мин, чаша 250 мл)", 10, 20, 60.0,
-            "Pre-mix сухих CB+AM или мягкий wet-mix малых партий.", 1,
+        "planetary_low" to Info(
+            "Планетарная (низкая)", MixToolType.PLANETARY,
+            "дисп. ~1200 · лопасти ~400 об/мин", 10, 20, 60.0,
+            "Pre-mix сухих CB+AM или мягкий wet-mix малых партий.",
         ),
-        MixingRegime(
-            "planetary_std", "Планетарная (стандарт)", "Planetary",
-            "~20 м/с (≈2500 об/мин)", 20, 40, 60.0,
-            "Базовый режим lab-диспергирования суспензий 0.2–2 л.", 3,
+        "planetary_std" to Info(
+            "Планетарная (стандарт)", MixToolType.PLANETARY,
+            "дисп. ~2500 · лопасти ~800 об/мин", 20, 40, 60.0,
+            "Базовый режим lab-диспергирования суспензий 0.2–2 л.",
         ),
-        MixingRegime(
-            "planetary_high", "Планетарная (высокая скорость)", "Planetary",
-            "~30 м/с (≈4000 об/мин)", 30, 60, 50.0,
-            "Интенсивное диспергирование; греется — контролируйте T°, возможен гель PVDF.", 3,
+        "planetary_high" to Info(
+            "Планетарная (высокая)", MixToolType.PLANETARY,
+            "дисп. ~4000 · лопасти ~1200 об/мин", 30, 60, 50.0,
+            "Интенсивное диспергирование; греется — контролируйте T°, возможен гель PVDF.",
         ),
-        MixingRegime(
-            "three_roll", "Трёхвальцовая мельница", "Three-roll",
+        "disc_dispersion" to Info(
+            "Диспергатор ротор-статор", MixToolType.DISC,
+            "8000–20000 об/мин (Diskpress, Ultra-Turrax)", 10, 45, 55.0,
+            "Высокий сдвиг; вводить сажу постепенно, следить за нагревом и деградацией PVDF.",
+        ),
+        "three_roll" to Info(
+            "Трёхвальцовая мельница", MixToolType.THREE_ROLL,
             "зазор 5–10 мкм, 2–3 прохода", 5, 15, 45.0,
-            "Финишный перетир после предсмеса; лучший деагломератор для φ > 35 %.", 4,
+            "Финишный перетир после предсмеса; лучший деагломератор для φ > 35 %.",
         ),
-        MixingRegime(
-            "ultrasonic", "УЗ-зонд (sonication)", "Ultrasonic",
+        "ultrasonic" to Info(
+            "УЗ-зонд (sonication)", MixToolType.ULTRASONIC,
             "20 кГц, импульсный режим", 5, 20, 40.0,
-            "Гомогенизация малых объёмов; следить за перегревом и деградацией связующего.", 3,
+            "Гомогенизация малых объёмов; следить за перегревом и деградацией связующего.",
         ),
-        MixingRegime(
-            "degassing", "Дегазация (вакуум)", "Vacuum",
+        "degassing" to Info(
+            "Дегазация (вакуум)", MixToolType.VACUUM,
             "< −0.08 МПа при помешивании", 5, 15, null,
-            "Удаление пузырей перед нанесением; финальный шаг любого режима.", 4,
+            "Удаление пузырей перед нанесением; финальный шаг любого режима.",
         ),
     )
 
-    fun byId(id: String): MixingRegime? = ALL.firstOrNull { it.id == id }
+    fun info(idOrName: String): Info? = ALL[idOrName] ?: ALL.values.firstOrNull { it.name == idOrName }
+}
 
-    /** Рекомендуемая последовательность стадий для выбранного основного режима */
-    fun recommendedSequence(mainId: String): List<String> = when (mainId) {
-        "manual_beaker" -> listOf("manual_beaker", "degassing")
-        "magnetic" -> listOf("magnetic", "degassing")
-        "planetary_low" -> listOf("planetary_low", "planetary_std", "degassing")
-        "planetary_std" -> listOf("planetary_low", "planetary_std", "degassing")
-        "planetary_high" -> listOf("planetary_low", "planetary_std", "planetary_high", "degassing")
-        "three_roll" -> listOf("planetary_std", "three_roll", "degassing")
-        "ultrasonic" -> listOf("planetary_std", "ultrasonic", "degassing")
-        else -> listOf(mainId)
+/**
+ * Репозиторий режимов смешивания: встроенные + пользовательские (SharedPreferences).
+ * Пользовательский режим можно создать прямо из карточки этапа («Сохранить как режим»).
+ */
+class RegimeStore(context: Context) {
+
+    private val prefs = context.getSharedPreferences("regimes.db", Context.MODE_PRIVATE)
+    private var nextId = 1L
+    private val customs = mutableListOf<CustomRegime>()
+
+    init {
+        val raw = prefs.getString("customs", null)
+        if (raw != null) try {
+            val arr = JSONArray(raw)
+            for (i in 0 until arr.length()) customs.add(fromJson(arr.getJSONObject(i)))
+            nextId = customs.mapNotNull { it.id.removePrefix("custom_").toLongOrNull() }.maxOrNull()?.plus(1) ?: 1L
+        } catch (_: Exception) { }
+    }
+
+    fun customList(): List<CustomRegime> = customs.toList()
+
+    /** все режимы для выбора в этапе: свои + встроенные */
+    fun allNames(): List<String> = customs.map { it.name } + BuiltinRegimes.ALL.values.map { it.name }
+
+    fun add(name: String, tool: MixToolType, dispr: Int?, blader: Int?, timeMin: Double?,
+            tempLimit: Double?, description: String): CustomRegime {
+        val r = CustomRegime(
+            id = "custom_${nextId++}",
+            name = name.trim().ifEmpty { "Мой режим" },
+            tool = tool, disperserRpmHint = dispr, bladeRpmHint = blader,
+            timeMinHint = timeMin, tempLimitC = tempLimit, description = description.trim(),
+        )
+        customs.add(0, r)
+        persist()
+        return r
+    }
+
+    fun remove(id: String): Boolean {
+        val removed = customs.removeAll { it.id == id }
+        if (removed) persist()
+        return removed
+    }
+
+    fun byName(name: String): CustomRegime? = customs.firstOrNull { it.name == name }
+
+    private fun persist() {
+        val arr = JSONArray()
+        customs.forEach { arr.put(toJson(it)) }
+        prefs.edit().putString("customs", arr.toString()).apply()
+    }
+
+    private fun toJson(r: CustomRegime) = JSONObject().apply {
+        put("id", r.id); put("name", r.name); put("tool", r.tool.name)
+        put("dispr", r.disperserRpmHint ?: JSONObject.NULL)
+        put("blader", r.bladeRpmHint ?: JSONObject.NULL)
+        put("time", r.timeMinHint ?: JSONObject.NULL)
+        put("temp", r.tempLimitC ?: JSONObject.NULL)
+        put("desc", r.description)
+    }
+
+    private fun fromJson(o: JSONObject) = CustomRegime(
+        id = o.optString("id"),
+        name = o.optString("name"),
+        tool = MixToolType.fromName(o.optString("tool")),
+        disperserRpmHint = if (o.isNull("dispr")) null else o.optInt("dispr").takeIf { it > 0 },
+        bladeRpmHint = if (o.isNull("blader")) null else o.optInt("blader").takeIf { it > 0 },
+        timeMinHint = if (o.isNull("time")) null else o.optDouble("time").takeIf { !it.isNaN() },
+        tempLimitC = if (o.isNull("temp")) null else o.optDouble("temp").takeIf { !it.isNaN() },
+        description = o.optString("desc"),
+    )
+}
+
+/**
+ * Рекомендуемая типовая последовательность этапов для состава.
+ * @param cathode true — NMP/PVDF-маршрут; false — водный маршрут CMC/SBR
+ */
+object MixingSequences {
+
+    fun template(cathode: Boolean, solventName: String): List<MixingStep> {
+        val binderFirst = if (cathode)
+            // PVDF сначала растворяем в NMP — иначе комки геля
+            listOf(
+                MixingStep(
+                    action = "Растворение связующего (PVDF)",
+                    tool = MixToolType.MAGNETIC, disperserRpm = null, bladeRpm = 400,
+                    durationMin = 60.0, tempC = 45.0,
+                    comment = "PVDF тонкой струйкой в часть NMP; полный раствор (без «рыбьих глаз»), затем охладить до RT.",
+                ),
+            )
+        else
+            // CMC предварительно гидратируем горячей водой, SBR — латекс в конце
+            listOf(
+                MixingStep(
+                    action = "Предгидратация CMC",
+                    tool = MixToolType.MAGNETIC, bladeRpm = 500,
+                    durationMin = 30.0, tempC = 60.0,
+                    comment = "CMC в горячую деионизованную воду, без комков; охладить перед использованием.",
+                ),
+            )
+        return binderFirst + listOf(
+            MixingStep(
+                action = if (cathode) "Ввод проводящей добавки (Super P)" else "Ввод проводящей добавки + pre-mix сухих",
+                tool = MixToolType.PLANETARY, disperserRpm = 1200, bladeRpm = 400,
+                durationMin = 15.0, tempC = null,
+                comment = "Сажа постепенно, смачиваем в части растворителя; высокая доля CB — отдельным этапом.",
+            ),
+            MixingStep(
+                action = "Ввод активного материала",
+                tool = MixToolType.PLANETARY, disperserRpm = 2500, bladeRpm = 800,
+                durationMin = 30.0, tempC = 45.0,
+                comment = "AM порциями; остаток растворителя — по вязкости. Контроль нагрева: не выше T°limit.",
+            ),
+            MixingStep(
+                action = "Финишное диспергирование / перетир",
+                tool = MixToolType.THREE_ROLL, disperserRpm = null, bladeRpm = null,
+                durationMin = 10.0, tempC = null,
+                comment = "2–3 прохода, зазор 5–10 мкм; проверка крупности агломератов на пластинке.",
+            ),
+            MixingStep(
+                action = "Дегазация",
+                tool = MixToolType.VACUUM, bladeRpm = 200,
+                durationMin = 10.0, tempC = null,
+                comment = "Вакуум при медленном помешивании до прекращения пузырения.",
+            ),
+        )
     }
 }
 
@@ -99,7 +272,7 @@ object BatchMath {
         val dryContentPct: Double,
         /** фактические доли компонентов в сухом веществе, % */
         val componentPctInDry: Map<String, Double>,
-        /** истинская ρ сухого вещества (правило обратных долей), г/см³ */
+        /** истинная ρ сухого вещества (правило обратных долей), г/см³ */
         val dryDensityGcm3: Double,
         /** расчётная ρ суспензии (идеальное смешение), г/см³ */
         val calcDensityGcm3: Double,

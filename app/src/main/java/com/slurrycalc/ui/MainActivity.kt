@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,19 +19,22 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -39,6 +43,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -48,12 +53,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.slurrycalc.engine.BatchMath
-import com.slurrycalc.engine.Catalog
+import com.slurrycalc.engine.BuiltinRegimes
 import com.slurrycalc.engine.JournalEntry
 import com.slurrycalc.engine.MaterialEntry
 import com.slurrycalc.engine.MaterialRole
-import com.slurrycalc.engine.MixingRegime
-import com.slurrycalc.engine.MixingRegimes
+import com.slurrycalc.engine.MixToolType
+import com.slurrycalc.engine.MixingStep
 import com.slurrycalc.engine.SolidComponent
 import com.slurrycalc.engine.Solvent
 import com.slurrycalc.engine.Solvents
@@ -66,8 +71,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         try {
             setContent {
-                MaterialTheme {
-                    SlurryScreen()
+                val vm: SlurryViewModel = viewModel()
+                var themeMode by remember { mutableStateOf(vm.settings.themeMode) }
+                var fontScale by remember { mutableStateOf(vm.settings.fontScale) }
+                SlurryTheme(mode = themeMode, fontScale = fontScale) {
+                    SlurryScreen(vm, onTheme = { themeMode = it }, onFontScale = { fontScale = it })
                 }
             }
         } catch (e: Throwable) {
@@ -109,21 +117,42 @@ class MainActivity : ComponentActivity() {
 }
 
 private fun parseD(s: String): Double? = s.trim().replace(',', '.').toDoubleOrNull()
+private fun parseI(s: String): Int? = parseD(s)?.toInt()
 private fun fmt(v: Double, digits: Int = 2): String =
     String.format(java.util.Locale.US, "%.${digits}f", v).replace('.', ',')
 
+/** число для поля ввода: без хвостовых нулей */
+private fun fmtNum(v: Double): String =
+    if (v == v.toLong().toDouble()) v.toLong().toString()
+    else fmt(v, 2).trimEnd('0').trimEnd(',')
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SlurryScreen(vm: SlurryViewModel = viewModel()) {
+fun SlurryScreen(
+    vm: SlurryViewModel,
+    onTheme: (AppThemeMode) -> Unit,
+    onFontScale: (Float) -> Unit,
+) {
     var tab by remember { mutableStateOf(0) }
+    var settingsOpen by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             Column {
                 TopAppBar(
-                    title = { Text("SlurryCalc") },
-                    colors = TopAppBarDefaults.topAppBarColors(),
+                    title = { Text("SlurryCalc", fontWeight = FontWeight.Bold) },
+                    actions = {
+                        TextButton(onClick = { settingsOpen = true }) { Text("Тема") }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ),
                 )
-                TabRow(selectedTabIndex = tab) {
+                TabRow(
+                    selectedTabIndex = tab,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                ) {
                     listOf("Расчёт", "Материалы", "Журнал").forEachIndexed { i, t ->
                         Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) })
                     }
@@ -146,6 +175,130 @@ fun SlurryScreen(vm: SlurryViewModel = viewModel()) {
             }
             Spacer(modifier = Modifier.height(24.dp))
         }
+        SettingsDialog(vm, settingsOpen, { settingsOpen = false }, onTheme, onFontScale)
+    }
+}
+
+/** Диалог настроек: тема и размер шрифта */
+@Composable
+private fun SettingsDialog(
+    vm: SlurryViewModel,
+    open: Boolean,
+    onDismiss: () -> Unit,
+    onTheme: (AppThemeMode) -> Unit,
+    onFontScale: (Float) -> Unit,
+) {
+    if (!open) return
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Оформление") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Тема", style = MaterialTheme.typography.titleSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AppThemeMode.entries.forEach { m ->
+                        FilterChip(
+                            selected = vm.settings.themeMode == m,
+                            onClick = { vm.setThemeMode(m); onTheme(m) },
+                            label = { Text(m.label) },
+                        )
+                    }
+                }
+                Text("Размер шрифта: ×${fmt(vm.settings.fontScale.toDouble(), 2)}",
+                    style = MaterialTheme.typography.titleSmall)
+                Slider(
+                    value = vm.settings.fontScale,
+                    onValueChange = { v ->
+                        val s = (Math.round(v * 20) / 20f).coerceIn(0.8f, 1.6f)
+                        vm.setFontScale(s); onFontScale(s)
+                    },
+                    valueRange = 0.8f..1.6f,
+                    steps = 15,
+                )
+                Text("Крупнее — текст подписей и подсказок переносится по словам, поля остаются читаемыми.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } },
+    )
+}
+
+// ============================ общие виджеты ============================
+
+@Composable
+private fun SectionCard(title: String, content: @Composable () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+            content()
+        }
+    }
+}
+
+/**
+ * Поле ввода: подпись — НАД полем, короткая подсказка/единицы — СПРАВА от подписи.
+ */
+@Composable
+fun LabeledField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    hint: String? = null,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = true,
+) {
+    Column(modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            Text(label, style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f, fill = false))
+            if (!hint.isNullOrBlank()) {
+                Text(hint, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(start = 6.dp).weight(1f, fill = false))
+            }
+        }
+        Spacer(Modifier.height(3.dp))
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = singleLine,
+            modifier = Modifier.fillMaxWidth(),
+            textStyle = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+/** Чипы рядами по 2 — чтобы длинные названия умещались */
+@Composable
+private fun ChipFlow(names: List<String>, selected: String?, onSelect: (String) -> Unit) {
+    names.chunked(2).forEach { rowItems ->
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            rowItems.forEach { n ->
+                FilterChip(
+                    selected = selected == n,
+                    onClick = { onSelect(n) },
+                    label = { Text(n, style = MaterialTheme.typography.labelMedium) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (rowItems.size == 1) Spacer(Modifier.weight(1f))
+        }
     }
 }
 
@@ -161,28 +314,6 @@ private fun CalcTab(vm: SlurryViewModel) {
     ViscosityCard(vm)
     ResultCard(vm)
     SaveToJournalCard(vm)
-}
-
-@Composable
-private fun SectionCard(title: String, content: @Composable () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
-        Column(Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            content()
-        }
-    }
-}
-
-@Composable
-private fun NumberField(value: String, onValueChange: (String) -> Unit, label: String, modifier: Modifier = Modifier) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        label = { Text(label) },
-        singleLine = true,
-        modifier = modifier,
-    )
 }
 
 @Composable
@@ -236,7 +367,7 @@ private fun SolidsCard(vm: SlurryViewModel) {
     }
 }
 
-/** Строка компонента с выпадающим списком выбора материала из базы */
+/** Строка компонента: выбор материала из базы + поля с подписями сверху и подсказками справа */
 @Composable
 private fun ComponentRow(
     component: SolidComponent,
@@ -250,44 +381,64 @@ private fun ComponentRow(
     var fraction by remember(component) { mutableStateOf(fmt(component.fraction * 100, 2)) }
     var expanded by remember { mutableStateOf(false) }
 
-    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            // Кнопка-селектор материала
-            MaterialPickerBox {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+    ) {
+        Column(Modifier.padding(10.dp)) {
+            Box(Modifier.fillMaxWidth()) {
                 OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (component.materialId != null) "✓ ${component.name}" else "${component.name} ▾",
-                        maxLines = 1)
+                    Text(
+                        if (component.materialId != null) "✓ ${component.name}" else "${component.name} ▾",
+                        maxLines = 1,
+                    )
                 }
                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                     itemsFiltered(materials).forEach { m ->
                         DropdownMenuItem(
                             text = {
                                 Column {
-                                    Text(m.name)
+                                    Text(m.name, style = MaterialTheme.typography.bodyMedium)
                                     Text(
                                         "${m.role.label} · ρ=${fmt(m.density, 2)}" +
-                                                (m.tapDensity?.let { " · нас.${fmt(it, 1)}" } ?: "") +
+                                                (m.tapDensity?.let { " · нас. ${fmt(it, 1)}" } ?: "") +
                                                 (m.particleSizeD50Um?.let { " · d50 ${it} мкм" } ?: ""),
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                 }
                             },
-                            onClick = {
-                                expanded = false
-                                onPickMaterial(m)
-                            },
+                            onClick = { expanded = false; onPickMaterial(m) },
                         )
                     }
                 }
             }
-            Button(onClick = onRemove) { Text("×") }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField(name, { name = it; onChange(it, null, null) }, "Название", Modifier.weight(1.4f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField(density, { density = it; onChange(null, it, null) }, "ρ, г/см³", Modifier.weight(1f))
-            NumberField(fraction, { fraction = it; onChange(null, null, it) }, "Доля, %", Modifier.weight(1f))
+            Spacer(Modifier.height(6.dp))
+            LabeledField(
+                name, { name = it; onChange(it, null, null) },
+                label = "Название", hint = "из базы или своё",
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LabeledField(
+                    density, { density = it; onChange(null, it, null) },
+                    label = "ρ истинная", hint = "г/см³",
+                    modifier = Modifier.weight(1f),
+                )
+                LabeledField(
+                    fraction, { fraction = it; onChange(null, null, it) },
+                    label = "Доля в сухом", hint = "%",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onRemove) {
+                    Text("удалить", color = MaterialTheme.colorScheme.error)
+                }
+            }
         }
     }
 }
@@ -295,47 +446,32 @@ private fun ComponentRow(
 private fun itemsFiltered(materials: List<MaterialEntry>): List<MaterialEntry> =
     materials.sortedBy { it.name.lowercase() }.distinctBy { it.name }
 
-/** обёртка, чтобы DropdownMenu не ломал раскладку */
-@Composable
-private fun MaterialPickerBox(content: @Composable () -> Unit) {
-    androidx.compose.foundation.layout.Box(
-        Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.CenterStart,
-    ) { content() }
-}
-
 @Composable
 private fun SolventCard(vm: SlurryViewModel) {
     SectionCard("Растворитель / среда") {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Solvents.all.forEach { s ->
-                FilterChip(
-                    selected = vm.solventName == s.name,
-                    onClick = { vm.setSolvent(s) },
-                    label = { Text(s.name) },
-                )
-            }
-            // из базы: растворители
-            vm.materialsDb.byRole(MaterialRole.SOLVENT).filter { e -> e.custom }.forEach { e ->
-                FilterChip(
-                    selected = vm.solventName == e.name,
-                    onClick = { vm.setSolvent(Solvent(e.name, e.density, e.viscosityMPas ?: 1.0)) },
-                    label = { Text(e.name) },
-                )
+        ChipFlow(
+            (Solvents.all.map { it.name } + vm.materialsDb.byRole(MaterialRole.SOLVENT)
+                .filter { it.custom }.map { it.name }).distinct(),
+            vm.solventName,
+        ) { sel ->
+            val preset = Solvents.all.firstOrNull { it.name == sel }
+            if (preset != null) vm.setSolvent(preset)
+            else vm.materialsDb.all().firstOrNull { it.name == sel && it.role == MaterialRole.SOLVENT }?.let {
+                vm.setSolvent(Solvent(it.name, it.density, it.viscosityMPas ?: 1.0))
             }
         }
         Spacer(Modifier.height(8.dp))
         var dens by remember(vm.solventName, vm.solventDensity) { mutableStateOf(fmt(vm.solventDensity, 3)) }
         var visc by remember(vm.solventName, vm.solventViscosity) { mutableStateOf(fmt(vm.solventViscosity, 2)) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField(dens, {
+            LabeledField(dens, {
                 dens = it
                 parseD(it)?.let { d -> vm.setSolvent(Solvent(vm.solventName, d, vm.solventViscosity)) }
-            }, "ρ р-ля, г/см³", Modifier.weight(1f))
-            NumberField(visc, {
+            }, "Плотность р-ля", "г/см³", Modifier.weight(1f))
+            LabeledField(visc, {
                 visc = it
                 parseD(it)?.let { v -> vm.setSolvent(Solvent(vm.solventName, vm.solventDensity, v)) }
-            }, "η р-ля, мПа·с", Modifier.weight(1f))
+            }, "Вязкость η₀", "мПа·с (= сПз)", Modifier.weight(1f))
         }
     }
 }
@@ -344,72 +480,249 @@ private fun SolventCard(vm: SlurryViewModel) {
 private fun BatchCard(vm: SlurryViewModel) {
     SectionCard("Партия и сухой остаток") {
         var dc by remember(vm.dryContentPct) { mutableStateOf(fmt(vm.dryContentPct, 1)) }
-        NumberField(dc, { dc = it; parseD(it)?.let { v -> vm.setDryContent(v) } }, "Сухой остаток, % (обычно 30–70)", Modifier.fillMaxWidth())
+        LabeledField(dc, { dc = it; parseD(it)?.let { v -> vm.setDryContent(v) } },
+            "Сухой остаток", "обычно 30–70 %, %")
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("масса суспензии, г", "масса сухого, г", "объём, мл").forEachIndexed { i, label ->
-                FilterChip(selected = vm.batchMode == i, onClick = { vm.selectBatchMode(i) }, label = { Text(label) })
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("масса суспензии", "масса сухого", "объём").forEachIndexed { i, label ->
+                FilterChip(
+                    selected = vm.batchMode == i,
+                    onClick = { vm.selectBatchMode(i) },
+                    label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
         Spacer(Modifier.height(8.dp))
         var bv by remember(vm.batchValue) { mutableStateOf(fmt(vm.batchValue, 0)) }
-        NumberField(bv, { bv = it; parseD(it)?.let { v -> vm.updateBatchValue(v) } }, "Значение партии", Modifier.fillMaxWidth())
+        LabeledField(bv, { bv = it; parseD(it)?.let { v -> vm.updateBatchValue(v) } },
+            "Значение партии",
+            when (vm.batchMode) { 0 -> "г мокрой суспензии"; 1 -> "г сухого вещества"; else -> "мл готовой суспензии" })
     }
 }
+
+// ---------- карточка режимов смешивания с этапами ----------
 
 @Composable
 private fun MixingCard(vm: SlurryViewModel) {
-    SectionCard("Режим смешивания") {
-        MixingRegimes.ALL.chunked(2).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 2.dp)) {
-                row.forEach { r ->
-                    FilterChip(
-                        selected = vm.mixingRegimeId == r.id,
-                        onClick = { vm.setMixingRegime(r.id) },
-                        label = { Text(r.name) },
-                    )
-                }
+    SectionCard("Режимы смешивания и этапы замеса") {
+        Text("Основной режим", style = MaterialTheme.typography.titleSmall)
+        Text("аппаратный режим; его параметры — ориентиры для этапов",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+        Spacer(Modifier.height(4.dp))
+        ChipFlow(vm.regimeNames(), vm.mixingRegimeName) { vm.setMixingRegime(it) }
+        BuiltinRegimes.info(vm.mixingRegimeName)?.let { r ->
+            Spacer(Modifier.height(6.dp))
+            Text("${r.tipSpeedHint} · ${r.timeMinFirst}–${r.timeMinLast} мин" +
+                    (r.tempLimitC?.let { " · T° ≤ ${fmt(it, 0)} °C" } ?: ""),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            Text(r.description, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        vm.regimeStore.customList().firstOrNull { it.name == vm.mixingRegimeName }?.let { r ->
+            Spacer(Modifier.height(6.dp))
+            Text("свой режим · ${r.tool.label}" +
+                        (r.disperserRpmHint?.let { " · дисп. $it об/мин" } ?: "") +
+                        (r.bladeRpmHint?.let { " · лопасти $it об/мин" } ?: "") +
+                        (r.timeMinHint?.let { " · ~${fmt(it, 0)} мин" } ?: ""),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            if (r.description.isNotBlank()) Text(r.description, style = MaterialTheme.typography.bodySmall)
+        }
+
+        Spacer(Modifier.height(10.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Этапы замеса", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { vm.loadSequenceTemplate() }) { Text("шаблон") }
+                TextButton(onClick = { vm.addStep() }) { Text("+ этап") }
             }
         }
-        MixingRegimes.byId(vm.mixingRegimeId)?.let { r ->
-            Spacer(Modifier.height(8.dp))
-            RegimeDetails(r)
-            Spacer(Modifier.height(6.dp))
-            Text("Типовая последовательность стадий:", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodySmall)
-            val seq = MixingRegimes.recommendedSequence(r.id)
-                .mapNotNull { MixingRegimes.byId(it) }
-                .joinToString(" → ") { it.name }
-            Text(seq, style = MaterialTheme.typography.bodySmall)
+        Text("типовой порядок: растворение связующего → ввод сажи → ввод активного материала → перетир → дегазация",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+        Spacer(Modifier.height(4.dp))
+
+        if (vm.steps.isEmpty()) {
+            Text("Этапов нет. Нажмите «+ этап» (добавить вручную) или «шаблон».",
+                style = MaterialTheme.typography.bodySmall)
+        }
+        vm.steps.forEachIndexed { i, s ->
+            StepEditor(
+                vm = vm,
+                step = s,
+                regimes = vm.regimeNames(),
+                onUpdate = { patch -> vm.updateStep(i, patch) },
+                onRemove = { vm.removeStep(i) },
+                onMove = { d -> vm.moveStep(i, d) },
+                onSaveAsRegime = { vm.saveStepAsRegime(s) },
+                canUp = i > 0, canDown = i < vm.steps.lastIndex,
+                number = i + 1,
+            )
         }
     }
 }
 
+/** Карточка этапа: действие, обороты диспергатора/лопастей, время, T°, комментарий */
 @Composable
-private fun RegimeDetails(r: MixingRegime) {
-    Column {
-        Text("Метод: ${r.method} · ${r.tipSpeedHint}", style = MaterialTheme.typography.bodySmall)
-        Text("Время: ${r.timeHint}" + (r.tempLimitC?.let { " · T° ≤ ${fmt(it, 0)} °C" } ?: ""),
-            style = MaterialTheme.typography.bodySmall)
-        Text(r.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun StepEditor(
+    vm: SlurryViewModel,
+    step: MixingStep,
+    regimes: List<String>,
+    onUpdate: ((MixingStep) -> MixingStep) -> Unit,
+    onRemove: () -> Unit,
+    onMove: (Int) -> Unit,
+    onSaveAsRegime: () -> Unit,
+    canUp: Boolean,
+    canDown: Boolean,
+    number: Int,
+) {
+    // локальные строки отвязаны от id этапа — не перезаписываются при каждом keystroke
+    var action by remember(step.id) { mutableStateOf(step.action) }
+    var dispr by remember(step.id) { mutableStateOf(step.disperserRpm?.toString() ?: "") }
+    var blader by remember(step.id) { mutableStateOf(step.bladeRpm?.toString() ?: "") }
+    var dur by remember(step.id) { mutableStateOf(step.durationMin?.let(::fmtNum) ?: "") }
+    var temp by remember(step.id) { mutableStateOf(step.tempC?.let(::fmtNum) ?: "") }
+    var comment by remember(step.id) { mutableStateOf(step.comment) }
+    var toolExpanded by remember { mutableStateOf(false) }
+    var regimeExpanded by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.30f)),
+    ) {
+        Column(Modifier.padding(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("$number", style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(8.dp))
+                LabeledField(
+                    action, { action = it; onUpdate { s -> s.copy(action = action) } },
+                    label = "Действие / этап", hint = "напр.: растворение PVDF, ввод сажи, перетир",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Box(Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { toolExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Оборудование: ${step.tool.label} ▾", maxLines = 1,
+                        style = MaterialTheme.typography.labelLarge)
+                }
+                DropdownMenu(expanded = toolExpanded, onDismissRequest = { toolExpanded = false }) {
+                    MixToolType.entries.forEach { t ->
+                        DropdownMenuItem(text = { Text(t.label) }, onClick = {
+                            toolExpanded = false
+                            onUpdate { s -> s.copy(tool = t) }
+                        })
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LabeledField(dispr, {
+                    dispr = it
+                    onUpdate { s -> s.copy(disperserRpm = parseI(it)) }
+                }, "Обороты диспергатора", "об/мин", Modifier.weight(1f))
+                LabeledField(blader, {
+                    blader = it
+                    onUpdate { s -> s.copy(bladeRpm = parseI(it)) }
+                }, "Обороты лопастей", "об/мин", Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LabeledField(dur, {
+                    dur = it
+                    onUpdate { s -> s.copy(durationMin = parseD(it)) }
+                }, "Длительность", "мин", Modifier.weight(1f))
+                LabeledField(temp, {
+                    temp = it
+                    onUpdate { s -> s.copy(tempC = parseD(it)) }
+                }, "Температура", "°C", Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(6.dp))
+            LabeledField(comment, { comment = it; onUpdate { s -> s.copy(comment = comment) } },
+                "Комментарий к действию", "что и как вносим, контроль готовности", singleLine = false)
+            Spacer(Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row {
+                    TextButton(onClick = { onMove(-1) }, enabled = canUp) { Text("↑") }
+                    TextButton(onClick = { onMove(+1) }, enabled = canDown) { Text("↓") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = onSaveAsRegime) { Text("→ свой режим") }
+                    TextButton(onClick = onRemove) {
+                        Text("×", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+            // быстрый пресет: подставить параметры выбранного режима в этап
+            Box(Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { regimeExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Подставить параметры режима…", style = MaterialTheme.typography.labelMedium)
+                }
+                DropdownMenu(expanded = regimeExpanded, onDismissRequest = { regimeExpanded = false }) {
+                    regimes.forEach { rn ->
+                        DropdownMenuItem(text = { Text(rn) }, onClick = {
+                            regimeExpanded = false
+                            val custom = vm.regimeStore.byName(rn)
+                            val builtin = BuiltinRegimes.info(rn)
+                            onUpdate { s ->
+                                s.copy(
+                                    tool = custom?.tool ?: builtin?.tool ?: s.tool,
+                                    disperserRpm = custom?.disperserRpmHint ?: s.disperserRpm,
+                                    bladeRpm = custom?.bladeRpmHint ?: s.bladeRpm,
+                                    durationMin = custom?.timeMinHint ?: s.durationMin,
+                                    tempC = custom?.tempLimitC ?: s.tempC,
+                                )
+                            }
+                        })
+                    }
+                }
+            }
+        }
     }
 }
 
 @Composable
 private fun ViscosityCard(vm: SlurryViewModel) {
     SectionCard("Модель оценки вязкости") {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val labels = mapOf(
                 ViscosityModel.NONE to "выкл",
                 ViscosityModel.MO to "Муни",
                 ViscosityModel.MARON_PIERIS to "Марон–Пирис",
                 ViscosityModel.KRIEGER_DOUGHERTY to "Кригер–Догерти",
             )
-            ViscosityModel.values().forEachIndexed { i, m ->
-                FilterChip(selected = vm.viscosityModelIndex == i, onClick = { vm.setViscosityModel(i) }, label = { Text(labels[m]!!) })
+            ViscosityModel.values().toList().chunked(2).forEach { pair ->
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    pair.forEach { m ->
+                        val i = ViscosityModel.values().indexOf(m)
+                        FilterChip(
+                            selected = vm.viscosityModelIndex == i,
+                            onClick = { vm.setViscosityModel(i) },
+                            label = { Text(labels[m]!!, style = MaterialTheme.typography.labelMedium) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
             }
         }
         Spacer(Modifier.height(4.dp))
-        Text("Оценки по объёмной доле φ; точность ±2×, для ориентира при подборе СО.", style = MaterialTheme.typography.bodySmall)
+        Text(
+            "Формулы (ηrel = ηсусп / ηр-ля): Муни exp(2,5φ/(1−φ/φm)); Марон–Пирис (1−kφ)⁻²; " +
+                "Кригер–Догерти (1−φ/φm)⁻²·⁵, φm ≈ 0,71. Диапазон сдвига ~1–1000 с⁻¹; точность ±2× — ориентир для подбора СО.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -435,7 +748,7 @@ private fun ResultCard(vm: SlurryViewModel) {
         Text("Плотность суспензии: ${fmt(r.slurryDensityGcm3)} г/см³   |   ρ сухого: ${fmt(r.dryDensityGcm3)} г/см³")
         Text("Объёмная доля твёрдой фазы φ: ${fmt(r.solidVolumeFraction * 100, 1)} %")
         r.viscosityEstimateMPas?.let {
-            Text("Оценка вязкости: ${fmt(it, 1)} мПа·с (ηrel = ${fmt(r.relativeViscosity!!, 2)})")
+            Text("Оценка вязкости: ${fmt(it, 1)} мПа·с (= сПз; ηrel = ${fmt(r.relativeViscosity!!, 2)})")
         }
         r.warnings.forEach { w ->
             Spacer(Modifier.height(4.dp))
@@ -449,10 +762,10 @@ private fun SaveToJournalCard(vm: SlurryViewModel) {
     if (vm.result == null) return
     SectionCard("Сохранить как план замеса") {
         var title by remember(vm) { mutableStateOf("") }
-        NumberField(title, { title = it }, "Название замеса (напр. «NMC622 batch#7»)", Modifier.fillMaxWidth())
+        LabeledField(title, { title = it }, "Название замеса", "напр. «NMC622 batch#7»")
         Spacer(Modifier.height(8.dp))
         Button(onClick = { vm.savePlanToJournal(title) }) {
-            Text("→ В журнал замесов")
+            Text("→ В журнал замесов" + (if (vm.steps.isNotEmpty()) " (${vm.steps.size} эт.)" else ""))
         }
         Spacer(Modifier.height(4.dp))
         Text("Фактические массы и результаты внесёте во вкладке «Журнал».", style = MaterialTheme.typography.bodySmall)
@@ -474,27 +787,28 @@ private fun MaterialsTab(vm: SlurryViewModel) {
         var moist by remember(vm) { mutableStateOf("") }
         var note by remember(vm) { mutableStateOf("") }
 
-        NumberField(name, { name = it }, "Название *", Modifier.fillMaxWidth())
+        LabeledField(name, { name = it }, "Название", "* обязательное")
         Spacer(Modifier.height(6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            MaterialRole.values().forEach { r ->
-                FilterChip(selected = role == r, onClick = { role = r }, label = { Text(r.label) })
-            }
+        ChipFlow(MaterialRole.entries.map { it.label }, role.label) { sel ->
+            role = MaterialRole.entries.first { it.label == sel }
         }
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField(dens, { dens = it }, "ρ истинская, г/см³ *", Modifier.weight(1f))
-            NumberField(tap, { tap = it }, "ρ насып., г/см³", Modifier.weight(1f))
+            LabeledField(dens, { dens = it }, "ρ истинная", "г/см³ *", Modifier.weight(1f))
+            LabeledField(tap, { tap = it }, "ρ насыпная", "г/см³", Modifier.weight(1f))
         }
+        Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField(d50, { d50 = it }, "d50, мкм", Modifier.weight(1f))
-            NumberField(bet, { bet = it }, "BET, м²/г", Modifier.weight(1f))
+            LabeledField(d50, { d50 = it }, "d50", "мкм", Modifier.weight(1f))
+            LabeledField(bet, { bet = it }, "BET", "м²/г", Modifier.weight(1f))
         }
+        Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField(cap, { cap = it }, "Ёмкость, мА·ч/г", Modifier.weight(1f))
-            NumberField(moist, { moist = it }, "Влага, ppm", Modifier.weight(1f))
+            LabeledField(cap, { cap = it }, "Ёмкость", "мА·ч/г", Modifier.weight(1f))
+            LabeledField(moist, { moist = it }, "Влага", "ppm", Modifier.weight(1f))
         }
-        NumberField(note, { note = it }, "Примечание", Modifier.fillMaxWidth())
+        Spacer(Modifier.height(6.dp))
+        LabeledField(note, { note = it }, "Примечание", "особенности дозировки и т.п.", singleLine = false)
         Spacer(Modifier.height(8.dp))
         Button(onClick = {
             val d = parseD(dens) ?: return@Button
@@ -511,7 +825,7 @@ private fun MaterialsTab(vm: SlurryViewModel) {
             )
             name = ""; dens = ""; tap = ""; d50 = ""; bet = ""; cap = ""; moist = ""; note = ""
         }) { Text("Добавить в базу") }
-        Text("* обязательные поля. Растворитель можно выбрать чипом в карточке «Растворитель» на вкладке «Расчёт».",
+        Text("Растворители добавляются чипом на вкладке «Расчёт» (роль «Растворитель» здесь тоже доступен).",
             style = MaterialTheme.typography.bodySmall)
     }
 
@@ -554,7 +868,7 @@ private fun MaterialRow(m: MaterialEntry, onDelete: (() -> Unit)?) {
 private fun JournalTab(vm: SlurryViewModel) {
     if (vm.journal.isEmpty()) {
         SectionCard("Журнал замесов пуст") {
-            Text("Сохраните расчёт во вкладке «Расчёт» кнопкой «→ В журнал замесов», затем заполните фактические массы и результаты.")
+            Text("Сохраните расчёт во вкладке «Расчёт» кнопкой «→ В журнал замесов», затем заполните этапы, фактические массы и результаты.")
         }
         return
     }
@@ -574,17 +888,92 @@ private fun JournalEntryCard(vm: SlurryViewModel, e: JournalEntry) {
             style = MaterialTheme.typography.bodySmall,
             color = if (e.hasActuals()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
         )
+        if (e.steps.isNotEmpty()) {
+            Text(
+                "Этапов: ${e.steps.size}" +
+                        (e.mixingDurationMin?.let { " · суммарно ~${fmt(it, 0)} мин" } ?: ""),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { expanded = !expanded }) { Text(if (expanded) "свернуть" else "факт и результаты…") }
+            OutlinedButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "свернуть" else "этапы, факт и результаты…")
+            }
             TextButton(onClick = { vm.loadFromJournal(e) }) { Text("в калькулятор") }
             TextButton(onClick = { vm.deleteJournalEntry(e.id) }) { Text("удалить") }
         }
         if (expanded) {
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
+            JournalStepsEditor(vm, e)
             ActualEditor(vm, e)
         }
+    }
+}
+
+/** Редактирование карты этапов прямо в записи журнала: добавить/удалить/редактировать вручную */
+@Composable
+private fun JournalStepsEditor(vm: SlurryViewModel, e: JournalEntry) {
+    // локальная копия списка этапов записи
+    val localSteps = remember(e.id, e.timestampMs) { mutableStateListOf(*e.steps.toTypedArray()) }
+    var dirty by remember(e.id, e.timestampMs) { mutableStateOf(false) }
+
+    Spacer(Modifier.height(6.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Карта этапов замеса", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = {
+                val cathode = e.plannedSolventName.contains("NMP", true)
+                com.slurrycalc.engine.MixingSequences.template(cathode, e.plannedSolventName)
+                    .forEach { localSteps.add(it.copy(id = System.nanoTime())) }
+                dirty = true
+            }) { Text("шаблон") }
+            TextButton(onClick = {
+                localSteps.add(MixingStep(id = System.nanoTime(), action = "Новый этап"))
+                dirty = true
+            }) { Text("+ этап") }
+        }
+    }
+    if (localSteps.isEmpty()) {
+        Text("Этапов нет — добавьте вручную («+ этап») или загрузите шаблон последовательности.",
+            style = MaterialTheme.typography.bodySmall)
+    }
+    localSteps.forEachIndexed { i, s ->
+        StepEditor(
+            vm = vm,
+            step = s,
+            regimes = vm.regimeNames(),
+            onUpdate = { patch ->
+                if (i in localSteps.indices) {
+                    localSteps[i] = patch(localSteps[i])
+                    dirty = true
+                }
+            },
+            onRemove = { if (i in localSteps.indices) { localSteps.removeAt(i); dirty = true } },
+            onMove = { d ->
+                val to = i + d
+                if (i in localSteps.indices && to in localSteps.indices) {
+                    val st = localSteps.removeAt(i); localSteps.add(to, st); dirty = true
+                }
+            },
+            onSaveAsRegime = { vm.saveStepAsRegime(s) },
+            canUp = i > 0, canDown = i < localSteps.lastIndex,
+            number = i + 1,
+        )
+    }
+    if (dirty) {
+        Spacer(Modifier.height(6.dp))
+        Button(onClick = {
+            val time = localSteps.sumOf { it.durationMin ?: 0.0 }.takeIf { it > 0 }
+            vm.updateJournalEntry(e.copy(steps = localSteps.toList(), mixingDurationMin = time))
+            dirty = false
+        }) { Text("Сохранить карту этапов") }
     }
 }
 
@@ -607,50 +996,65 @@ private fun ActualEditor(vm: SlurryViewModel, e: JournalEntry) {
     var comment by remember(e.id, e.timestampMs) { mutableStateOf(e.comment) }
     var verdict by remember(e.id, e.timestampMs) { mutableStateOf(e.verdict) }
 
-    Text("Фактические взвешенные массы, г:", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
+    Spacer(Modifier.height(6.dp))
+    Text("Фактические взвешенные массы", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
     e.componentNames.forEachIndexed { i, name ->
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(name, modifier = Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall)
-            Text("план ${fmt(e.plannedComponentMassesG.getOrElse(i) { 0.0 }, 1)} г",
-                modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-            NumberField(actuals[i], { actuals[i] = it }, "факт", Modifier.weight(1f))
+        Column(Modifier.padding(vertical = 3.dp)) {
+            Text("$name · план ${fmt(e.plannedComponentMassesG.getOrElse(i) { 0.0 }, 1)} г",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+            LabeledField(actuals[i], { actuals[i] = it }, "Факт", "г")
         }
     }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(e.plannedSolventName, modifier = Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall)
-        Text("план ${fmt(e.plannedSolventMassG, 1)} г", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-        NumberField(solv, { solv = it }, "факт", Modifier.weight(1f))
+    Column(Modifier.padding(vertical = 3.dp)) {
+        Text("${e.plannedSolventName} · план ${fmt(e.plannedSolventMassG, 1)} г",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+        LabeledField(solv, { solv = it }, "Факт", "г")
     }
 
     Spacer(Modifier.height(8.dp))
-    Text("Процесс:", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
+    Text("Процесс", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NumberField(dur, { dur = it }, "Длительность, мин", Modifier.weight(1f))
-        NumberField(temp, { temp = it }, "T° суспензии, °C", Modifier.weight(1f))
-    }
-    NumberField(mixNotes, { mixNotes = it }, "Комментарии процесса (порядок загрузки, особенности)", Modifier.fillMaxWidth())
-
-    Spacer(Modifier.height(8.dp))
-    Text("Результаты замеса:", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NumberField(visc, { visc = it }, "η, мПа·с", Modifier.weight(1f))
-        NumberField(viscCond, { viscCond = it }, "условия (с⁻¹/шпиндель)", Modifier.weight(1.2f))
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NumberField(measDens, { measDens = it }, "ρ пасты, г/см³", Modifier.weight(1f))
-        NumberField(grindUm, { grindUm = it }, "крупн. агломер., мкм", Modifier.weight(1f))
-    }
-    Text("Степень перетира:", style = MaterialTheme.typography.bodySmall)
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        listOf("нет комков", "единичные агломераты", "видимые агломераты", "неудовлетворительно").forEach { g ->
-            FilterChip(selected = grind == g, onClick = { grind = if (grind == g) "" else g }, label = { Text(g) })
-        }
+        LabeledField(dur, { dur = it }, "Длительность", "мин (итог)", Modifier.weight(1f))
+        LabeledField(temp, { temp = it }, "T° суспензии", "°C", Modifier.weight(1f))
     }
     Spacer(Modifier.height(6.dp))
-    NumberField(comment, { comment = it }, "Итоговый комментарий", Modifier.fillMaxWidth())
+    LabeledField(mixNotes, { mixNotes = it }, "Комментарии процесса", "порядок загрузки, особенности", singleLine = false)
+
+    Spacer(Modifier.height(8.dp))
+    Text("Результаты замеса", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LabeledField(visc, { visc = it }, "Вязкость η", "мПа·с", Modifier.weight(1f))
+        LabeledField(viscCond, { viscCond = it }, "Условия измерения", "с⁻¹ / шпиндель", Modifier.weight(1.2f))
+    }
+    Spacer(Modifier.height(6.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LabeledField(measDens, { measDens = it }, "Плотность пасты ρ", "г/см³", Modifier.weight(1f))
+        LabeledField(grindUm, { grindUm = it }, "Крупн. агломератов", "мкм", Modifier.weight(1f))
+    }
+    Spacer(Modifier.height(6.dp))
+    Text("Степень перетира", style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
+    listOf("нет комков", "единичные агломераты", "видимые агломераты", "неудовлетворительно")
+        .chunked(2).forEach { rowItems ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(vertical = 2.dp)) {
+                rowItems.forEach { g ->
+                    FilterChip(selected = grind == g, onClick = { grind = if (grind == g) "" else g },
+                        label = { Text(g, style = MaterialTheme.typography.labelMedium) },
+                        modifier = Modifier.weight(1f))
+                }
+                if (rowItems.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    Spacer(Modifier.height(6.dp))
+    LabeledField(comment, { comment = it }, "Итоговый комментарий", "внешний вид, стабильность, наносимость", singleLine = false)
+    Spacer(Modifier.height(6.dp))
+    Text("Вердикт", style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         listOf("OK", "на доработку", "брак").forEach { v ->
-            FilterChip(selected = verdict == v, onClick = { verdict = if (verdict == v) "" else v }, label = { Text(v) })
+            FilterChip(selected = verdict == v, onClick = { verdict = if (verdict == v) "" else v },
+                label = { Text(v) }, modifier = Modifier.weight(1f))
         }
     }
 

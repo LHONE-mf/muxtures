@@ -1,6 +1,7 @@
 package com.slurrycalc.ui
 
 import android.app.Application
+import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -9,12 +10,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import com.slurrycalc.engine.BatchMath
+import com.slurrycalc.engine.BuiltinRegimes
 import com.slurrycalc.engine.JournalEntry
 import com.slurrycalc.engine.JournalStore
 import com.slurrycalc.engine.MaterialEntry
 import com.slurrycalc.engine.MaterialRole
 import com.slurrycalc.engine.MaterialsDb
-import com.slurrycalc.engine.MixingRegimes
+import com.slurrycalc.engine.MixToolType
+import com.slurrycalc.engine.MixingSequences
+import com.slurrycalc.engine.MixingStep
+import com.slurrycalc.engine.RegimeStore
 import com.slurrycalc.engine.SlurryEngine
 import com.slurrycalc.engine.SlurryResult
 import com.slurrycalc.engine.Solvent
@@ -23,11 +28,27 @@ import com.slurrycalc.engine.Solvents
 import com.slurrycalc.engine.ViscosityModel
 import kotlin.math.abs
 
+/** Внешность приложения: тема и размер шрифта (настройки пользователя) */
+enum class AppThemeMode(val label: String) { SYSTEM("Системная"), LIGHT("Светлая"), DARK("Тёмная") }
+
+class Settings(context: Context) {
+    private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    var themeMode: AppThemeMode
+        get() = AppThemeMode.entries.firstOrNull { it.name == prefs.getString("theme", null) } ?: AppThemeMode.SYSTEM
+        set(v) = prefs.edit().putString("theme", v.name).apply()
+    /** множитель размера шрифта 0.8–1.6 */
+    var fontScale: Float
+        get() = prefs.getFloat("fontScale", 1.0f)
+        set(v) = prefs.edit().putFloat("fontScale", v.coerceIn(0.8f, 1.6f)).apply()
+}
+
 class SlurryViewModel(app: Application) : AndroidViewModel(app) {
 
     private val engine = SlurryEngine()
     val materialsDb = MaterialsDb(app)
     val journalStore = JournalStore(app)
+    val regimeStore = RegimeStore(app)
+    val settings = Settings(app)
 
     // ---------- состав ----------
     val solids = mutableStateListOf<SolidComponent>()
@@ -45,8 +66,12 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
 
     var viscosityModelIndex by mutableIntStateOf(ViscosityModel.MO.ordinal); private set
 
-    /** выбранный режим смешивания (id из MixingRegimes.ALL) */
-    var mixingRegimeId by mutableStateOf("planetary_std"); private set
+    /** выбранный основной режим смешивания (имя из встроенных или своих) */
+    var mixingRegimeName by mutableStateOf(BuiltinRegimes.ALL["planetary_std"]!!.name); private set
+
+    /** пошаговая карта замеса (редактируется в калькуляторе и в журнале) */
+    val steps = mutableStateListOf<MixingStep>()
+    private var stepId = 1L
 
     var result by mutableStateOf<SlurryResult?>(null); private set
     var error by mutableStateOf(""); private set
@@ -134,7 +159,61 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
         viscosityModelIndex = index.coerceIn(0, ViscosityModel.values().size - 1)
         recalculate()
     }
-    fun setMixingRegime(id: String) { mixingRegimeId = id }
+    fun setMixingRegime(name: String) { mixingRegimeName = name }
+
+    // ---------- этапы смешивания ----------
+
+    private fun newStepId(): Long = System.currentTimeMillis() * 1000 + (stepId++)
+
+    fun addStep(step: MixingStep = MixingStep(id = 0, action = "Новый этап")) {
+        steps.add(step.copy(id = newStepId()))
+    }
+
+    fun removeStep(index: Int) { if (index in steps.indices) steps.removeAt(index) }
+
+    fun moveStep(index: Int, delta: Int) {
+        val to = index + delta
+        if (index in steps.indices && to in steps.indices) {
+            val s = steps.removeAt(index)
+            steps.add(to, s)
+        }
+    }
+
+    fun updateStep(index: Int, patch: (MixingStep) -> MixingStep) {
+        if (index in steps.indices) steps[index] = patch(steps[index])
+    }
+
+    /** загрузить типовую последовательность этапов под текущий состав/растворитель */
+    fun loadSequenceTemplate() {
+        val cathode = solventName.contains("NMP", true)
+        val list = MixingSequences.template(cathode, solventName)
+        steps.clear()
+        list.forEach { steps.add(it.copy(id = newStepId())) }
+    }
+
+    /** применить параметры выбранного режима к этапу (подстановка подсказок) */
+    fun applyRegimeToStep(stepIndex: Int, regimeName: String) {
+        if (stepIndex !in steps.indices) return
+        val custom = regimeStore.byName(regimeName)
+        val builtin = BuiltinRegimes.info(regimeName)
+        steps[stepIndex] = steps[stepIndex].copy(
+            tool = custom?.tool ?: builtin?.tool ?: steps[stepIndex].tool,
+            disperserRpm = custom?.disperserRpmHint ?: steps[stepIndex].disperserRpm,
+            bladeRpm = custom?.bladeRpmHint ?: steps[stepIndex].bladeRpm,
+            durationMin = custom?.timeMinHint ?: steps[stepIndex].durationMin,
+            tempC = custom?.tempLimitC ?: steps[stepIndex].tempC,
+        )
+    }
+
+    fun saveStepAsRegime(step: MixingStep) {
+        val name = step.action.ifBlank { "Режим ${regimeStore.customList().size + 1}" }
+        regimeStore.add(
+            name = name, tool = step.tool,
+            dispr = step.disperserRpm, blader = step.bladeRpm,
+            timeMin = step.durationMin, tempLimit = step.tempC,
+            description = step.comment,
+        )
+    }
 
     fun recalculate() {
         error = ""
@@ -165,6 +244,7 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
         val r = result ?: return null
         val recipe = solids.joinToString(" / ") { "${it.name} ${fmt1(it.fraction * 100)}" } +
                 " @ $solventName, СО ${fmt1(dryContentPct)} %"
+        val stepsTime = steps.sumOf { it.durationMin ?: 0.0 }.takeIf { it > 0 }
         val e = JournalEntry(
             id = 0,
             timestampMs = System.currentTimeMillis(),
@@ -178,9 +258,10 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
             plannedSolventName = solventName,
             plannedSolventDensity = solventDensity,
             plannedSolventMassG = r.solventMassG,
-            mixingRegimeId = mixingRegimeId,
-            mixingDurationMin = null,
+            mixingRegimeId = mixingRegimeName,
+            mixingDurationMin = stepsTime,
             mixingNotes = "",
+            steps = steps.toList(),
         )
         val saved = journalStore.add(e)
         journal.add(0, saved)
@@ -217,13 +298,22 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
         dryContentPct = e.plannedDryContentPct
         batchMode = 0
         batchValue = e.plannedWetMassG
-        mixingRegimeId = e.mixingRegimeId.ifBlank { mixingRegimeId }
+        if (e.mixingRegimeId.isNotBlank()) mixingRegimeName = e.mixingRegimeId
+        steps.clear()
+        e.steps.forEach { steps.add(it.copy(id = newStepId())) }
         recalculate()
     }
 
     fun actualFor(e: JournalEntry): BatchMath.ActualBatch? = e.computeActual()
 
-    fun regimeName(id: String): String = MixingRegimes.byId(id)?.name ?: id
+    fun regimeName(nameOrId: String): String =
+        BuiltinRegimes.info(nameOrId)?.name ?: nameOrId
+
+    /** список режимов для выбора: свои + встроенные */
+    fun regimeNames(): List<String> = regimeStore.allNames()
+
+    fun setThemeMode(mode: AppThemeMode) { settings.themeMode = mode }
+    fun setFontScale(scale: Float) { settings.fontScale = scale }
 
     private fun fmt1(v: Double): String = String.format(java.util.Locale.US, "%.1f", v)
 }

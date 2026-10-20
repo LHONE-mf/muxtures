@@ -3,7 +3,7 @@ package com.slurrycalc.engine
 /**
  * Компонент твёрдой фазы суспензии (активная масса, проводник, связующее в сухом виде и т.п.)
  * @param name   название компонента
- * @param density истинская плотность, г/см³
+ * @param density истинная плотность, г/см³
  * @param fraction массовая доля компонента в СУХОМ веществе (0..1)
  * @param materialId ссылка на запись базы материалов (null — ручной ввод)
  * @param role роль материала (для подсказок); null — неизвестно
@@ -78,7 +78,21 @@ object Materials {
     )
 }
 
-enum class ViscosityModel { NONE, MARON_PIERIS, MO, KRIEGER_DOUGHERTY }
+enum class ViscosityModel { NONE, MO, MARON_PIERIS, KRIEGER_DOUGHERTY }
+
+/** Параметры моделей оценки вязкости (диапазон сдвига ~1–1000 с⁻¹) */
+object ViscosityModels {
+    /** Марон–Пирис: ηrel = (1 − kφ)^−2, разумна при kφ < 0.85 */
+    const val MARON_K_DEFAULT = 2.5
+
+    /** Кригер–Догерти: ηrel = (1 − φ/φm)^−k, k = 2.5, φm ≈ 0.61–0.74 */
+    const val KD_K = 2.5
+    const val KD_PHI_MAX = 0.71
+
+    /** Муни: ηrel = exp(2.5·φ/(1 − φ/φm)) */
+    const val MO_A = 2.5
+    const val MO_PHI_MAX = 0.71
+}
 
 /**
  * Входные данные расчёта партии суспензии.
@@ -96,7 +110,7 @@ data class SlurryInput(
     val targetVolumeMl: Double = 0.0,
     val viscosityModel: ViscosityModel = ViscosityModel.MO,
     /** параметр Марона–Пириса k (обычно 2.5 для сферических частиц) */
-    val maronK: Double = 2.5,
+    val maronK: Double = ViscosityModels.MARON_K_DEFAULT,
 )
 
 /** Результаты расчёта партии */
@@ -105,7 +119,7 @@ data class SlurryResult(
     val solventMassG: Double,
     val wetMassG: Double,
     val componentMassesG: Map<String, Double>,
-    val dryDensityGcm3: Double,      // истинская плотность сухого вещества
+    val dryDensityGcm3: Double,      // истинная плотность сухого вещества
     val slurryDensityGcm3: Double,   // плотность готовой суспензии
     val volumeMl: Double,            // объём партии
     val solidVolumeFraction: Double, // φ — объёмная доля твёрдой фазы
@@ -139,7 +153,7 @@ class SlurryEngine {
         if (input.dryContentMassFraction <= 0 || input.dryContentMassFraction >= 1)
             return Result.failure(IllegalArgumentException("Сухой остаток должен быть между 0 и 100 %"))
 
-        // Истинская плотность сухого вещества (правило обратных долей)
+        // Истинная плотность сухого вещества (правило обратных долей)
         val dryDensity = 1.0 / solids.sumOf { it.fraction / it.density }
 
         // Определяем массы по тому, что задал пользователь
@@ -174,23 +188,35 @@ class SlurryEngine {
         val phi = solidVolume / totalVolume
         val slurryDensity = wetMass / totalVolume
 
-        // Оценка вязкости
-        val phiMax = 0.74
+        // Оценка вязкости. Модели — для ньютониовской области сдвига (~1–1000 с⁻¹);
+        // реальные суспензии псевдопластичны, оценки дают порядок величины (±2×).
+        //   Муни:            ηrel = exp(2.5·φ / (1 − φ/φm)),   φ < φm ≈ 0.71
+        //   Марон–Пирис:     ηrel = (1 − kφ)^−2,               kφ < 0.85
+        //   Кригер–Догерти:  ηrel = (1 − φ/φm)^−k,             φ < φm ≈ 0.71
+        val phiMaxMo = ViscosityModels.MO_PHI_MAX
+        val phiMaxKd = ViscosityModels.KD_PHI_MAX
         val (relEta, modelWarn) = when (input.viscosityModel) {
             ViscosityModel.NONE -> null to null
-            ViscosityModel.MARON_PIERIS ->
-                if (phi >= 1.0 / input.maronK) null to "φ слишком велик для модели Марона–Пириса"
-                else Math.pow(1.0 - input.maronK * phi, -2.0) to null
-            ViscosityModel.KRIEGER_DOUGHERTY ->
-                if (phi >= phiMax) null to "φ ≥ φmax (0.74) — модель Кригера–Догерти неприменима"
-                else Math.pow(1.0 - phi / phiMax, -input.maronK) to null
             ViscosityModel.MO ->
-                if (phi >= phiMax) null to "φ ≥ φmax (0.74) — модель Муни неприменима"
-                else Math.exp(2.5 * phi / (1.0 - phi / phiMax)) to null
+                if (phi >= phiMaxMo) null to "φ ≥ ${"%.0f".format(phiMaxMo * 100)} % — модель Муни неприменима (запредельная упаковка)"
+                else Math.exp(ViscosityModels.MO_A * phi / (1.0 - phi / phiMaxMo)) to null
+            ViscosityModel.MARON_PIERIS -> {
+                val kPhi = input.maronK * phi
+                val w = if (kPhi >= 0.85) "Марон–Пирис за пределами применимости (kφ ≥ 0.85) — оценка занижена/некорректна" else null
+                if (kPhi >= 1.0) null to w
+                else Math.pow(1.0 - kPhi, -2.0) to w
+            }
+            ViscosityModel.KRIEGER_DOUGHERTY ->
+                if (phi >= phiMaxKd) null to "φ ≥ ${"%.0f".format(phiMaxKd * 100)} % — модель Кригера–Догерти неприменима"
+                else Math.pow(1.0 - phi / phiMaxKd, -ViscosityModels.KD_K) to null
         }
         modelWarn?.let { warnings.add(it) }
 
         val eta = relEta?.let { input.solvent.viscosityDynamic * it }
+        if (eta != null && eta > 5000) warnings.add(
+            "Оценка η ≈ " + String.format(java.util.Locale.US, "%.0f", eta) +
+                " мПа·с — выше типовой наноспособности (~1000–5000 мПа·с); снижайте СО или меняйте режим диспергирования"
+        )
 
         if (phi > 0.65) warnings.add(
             "Высокая объёмная доля твёрдой фазы (φ = " +

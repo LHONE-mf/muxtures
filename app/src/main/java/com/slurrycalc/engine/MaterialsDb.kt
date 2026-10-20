@@ -26,7 +26,7 @@ data class MaterialEntry(
     val id: Long,
     val name: String,
     val role: MaterialRole,
-    /** истинская плотность, г/см³ */
+    /** истинная плотность, г/см³ */
     val density: Double,
     /** насыпная (упаковочная) плотность, г/см³ — полезна при дозировании */
     val tapDensity: Double? = null,
@@ -50,7 +50,7 @@ data class MaterialEntry(
     val custom: Boolean = false,
 )
 
-/** Встроенный каталог типовых материалов (истинские плотности, г/см³) */
+/** Встроенный каталог типовых материалов (истинные плотности, г/см³) */
 object Catalog {
     val DEFAULTS: List<MaterialEntry> = listOf(
         // --- катодные активные материалы ---

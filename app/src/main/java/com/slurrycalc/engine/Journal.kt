@@ -27,10 +27,12 @@ data class JournalEntry(
     val plannedSolventName: String,
     val plannedSolventDensity: Double,
     val plannedSolventMassG: Double,
-    // ---- режим смешивания ----
-    val mixingRegimeId: String,
+    // ---- этапы смешивания (режим + действия) ----
+    val mixingRegimeId: String,          // legacy: основной режим (id или имя)
     val mixingDurationMin: Double?,
-    val mixingNotes: String,                 // комментарии процесса (порядок загрузки и т.п.)
+    val mixingNotes: String,             // комментарии процесса (порядок загрузки и т.п.)
+    /** пошаговая карта замеса: действие, обороты диспергатора/лопастей, время, T°, комментарий */
+    val steps: List<MixingStep> = emptyList(),
     // ---- факт: реальные взвешенные массы ----
     val actualComponentMassesG: List<Double?> = componentNames.map { null },
     val actualSolventMassG: Double? = null,
@@ -129,6 +131,25 @@ class JournalStore(context: Context) {
 
     private fun JSONArray.addDoubles(v: List<Double>) { v.forEach { put(it) } }
 
+    private fun stepJson(s: MixingStep) = JSONObject().apply {
+        put("action", s.action); put("tool", s.tool.name)
+        put("dispr", s.disperserRpm ?: JSONObject.NULL)
+        put("blader", s.bladeRpm ?: JSONObject.NULL)
+        put("dur", s.durationMin ?: JSONObject.NULL)
+        put("temp", s.tempC ?: JSONObject.NULL)
+        put("cmt", s.comment)
+    }
+
+    private fun stepFromJson(o: JSONObject) = MixingStep(
+        action = o.optString("action"),
+        tool = MixToolType.fromName(o.optString("tool")),
+        disperserRpm = if (o.isNull("dispr")) null else o.optInt("dispr").takeIf { it > 0 },
+        bladeRpm = if (o.isNull("blader")) null else o.optInt("blader").takeIf { it > 0 },
+        durationMin = if (o.isNull("dur")) null else o.optDouble("dur").takeIf { !it.isNaN() },
+        tempC = if (o.isNull("temp")) null else o.optDouble("temp").takeIf { !it.isNaN() },
+        comment = o.optString("cmt"),
+    )
+
     private fun toJson(e: JournalEntry) = JSONObject().apply {
         put("id", e.id); put("ts", e.timestampMs); put("title", e.title)
         put("pdc", e.plannedDryContentPct); put("pwet", e.plannedWetMassG)
@@ -139,6 +160,7 @@ class JournalStore(context: Context) {
         put("solvName", e.plannedSolventName); put("solvDens", e.plannedSolventDensity); put("solvMass", e.plannedSolventMassG)
         put("regime", e.mixingRegimeId); put("dur", e.mixingDurationMin ?: JSONObject.NULL)
         put("mixNotes", e.mixingNotes)
+        put("steps", JSONArray().apply { e.steps.forEach { s -> put(stepJson(s)) } })
         put("amass", JSONArray().apply { putDoubles(e.actualComponentMassesG) })
         put("asolv", e.actualSolventMassG ?: JSONObject.NULL)
         put("visc", e.resultViscosityMPas ?: JSONObject.NULL)
@@ -171,6 +193,7 @@ class JournalStore(context: Context) {
             mixingRegimeId = o.optString("regime"),
             mixingDurationMin = optD("dur"),
             mixingNotes = o.optString("mixNotes"),
+            steps = o.optJSONArray("steps")?.let { a -> (0 until a.length()).map { stepFromJson(a.getJSONObject(it)) } } ?: emptyList(),
             actualComponentMassesG = o.optJSONArray("amass")?.doubles() ?: emptyList(),
             actualSolventMassG = optD("asolv"),
             resultViscosityMPas = optD("visc"),
