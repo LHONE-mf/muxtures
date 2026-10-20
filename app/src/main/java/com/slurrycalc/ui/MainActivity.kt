@@ -1,6 +1,7 @@
 package com.slurrycalc.ui
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -42,18 +43,60 @@ import com.slurrycalc.engine.ViscosityModel
 import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            MaterialTheme {
-                SlurryScreen()
+        // Если Compose-интерфейс по какой-то причине падает — показываем ошибку
+        // прямо на экране (чтобы было видно стектрейс без adb), а не вылетаем молча.
+        try {
+            setContent {
+                MaterialTheme {
+                    SlurryScreen()
+                }
+            }
+        } catch (e: Throwable) {
+            Log.e("SlurryCalc", "UI init failed", e)
+            showFatalError(e)
+        }
+    }
+
+    private fun showFatalError(e: Throwable) {
+        val sw = java.io.StringWriter()
+        e.printStackTrace(java.io.PrintWriter(sw))
+        setContentView(
+            android.widget.HorizontalScrollView(this).apply {
+                addView(
+                    android.widget.TextView(this@MainActivity).apply {
+                        text = "SlurryCalc: ошибка запуска\n\n$sw"
+                        setTextIsSelectable(true)
+                        setPadding(32, 32, 32, 32)
+                    }
+                )
+            }
+        )
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Дополнительная защита: ошибки, возникающие уже после onCreate
+        // (например, при первом compose-recompose), тоже ловим и показываем.
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            Log.e("SlurryCalc", "Uncaught exception", throwable)
+            try {
+                runOnUiThread { showFatalError(throwable) }
+                Thread.sleep(60_000) // даём время прочитать сообщение на экране
+            } catch (_: Exception) {
+            } finally {
+                previous?.uncaughtException(thread, throwable)
             }
         }
     }
 }
 
 private fun parseD(s: String): Double? = s.trim().replace(',', '.').toDoubleOrNull()
-private fun fmt(v: Double, digits: Int = 2): String = String.format("%.${digits}f", v).replace('.', ',')
+private fun fmt(v: Double, digits: Int = 2): String =
+    String.format(java.util.Locale.US, "%.${digits}f", v).replace('.', ',')
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

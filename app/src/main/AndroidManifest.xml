@@ -7,15 +7,23 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.SlurryCalc">
+        <!-- Прозрачная Activity- trampolinia: на Android 8.1 (API 27) и ниже
+             ComponentActivity с Compose иногда падает при прямом лаунче из-за
+             особенностей состояния сохранения; отдельный прозрачный хост надёжно
+             запускает MainActivity через startActivity + finish. -->
         <activity
-            android:name=".MainActivity"
+            android:name=".LauncherActivity"
             android:exported="true"
-            android:windowSoftInputMode="adjustResize">
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 
 </manifest>

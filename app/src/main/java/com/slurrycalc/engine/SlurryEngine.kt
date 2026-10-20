@@ -119,7 +119,8 @@ class SlurryEngine {
             solids to "Сумма долей сухих компонентов равна нулю"
         } else if (kotlin.math.abs(sum - 1.0) > 0.005) {
             solids.map { it.copy(fraction = it.fraction / sum) } to
-                "Сумма долей = %.1f %, доли нормализованы к 100 %".format(sum * 100)
+                "Сумма долей = " + String.format(java.util.Locale.US, "%.1f", sum * 100) +
+                " %, доли нормализованы к 100 %"
         } else {
             solids to null
         }
@@ -187,7 +188,11 @@ class SlurryEngine {
 
         val eta = relEta?.let { input.solvent.viscosityDynamic * it }
 
-        if (phi > 0.65) warnings.add("Высокая объёмная доля твёрдой фазы (φ = %.0f %) — суспензия может быть трудноразливаемой".format(phi * 100))
+        if (phi > 0.65) warnings.add(
+            "Высокая объёмная доля твёрдой фазы (φ = " +
+                String.format(java.util.Locale.US, "%.0f", phi * 100) +
+                " %) — суспензия может быть трудноразливаемой"
+        )
 
         return Result.success(
             SlurryResult(
