@@ -1,10 +1,17 @@
 package com.slurrycalc.ui
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -42,6 +50,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -49,7 +58,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.slurrycalc.engine.BatchMath
@@ -62,26 +79,125 @@ import com.slurrycalc.engine.MixingStep
 import com.slurrycalc.engine.SolidComponent
 import com.slurrycalc.engine.Solvent
 import com.slurrycalc.engine.Solvents
+import com.slurrycalc.engine.TaskQr
+import com.slurrycalc.engine.TaskTransfer
 import com.slurrycalc.engine.ViscosityModel
 import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
 
+    /** текст входящего задания (JSON / base64 / ссылка) — показываем диалог подтверждения */
+    private var pendingTask by mutableStateOf<String?>(null)
+
+    private val importLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? -> if (uri != null) readTaskFromUri(uri) }
+
+    private val exportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? -> if (uri != null) writeExportedText(uri) }
+
+    private var pendingExport: Pair<String, String>? = null  // fileName to text
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleIntent(intent)
         try {
             setContent {
                 val vm: SlurryViewModel = viewModel()
                 var themeMode by remember { mutableStateOf(vm.settings.themeMode) }
                 var fontScale by remember { mutableStateOf(vm.settings.fontScale) }
                 SlurryTheme(mode = themeMode, fontScale = fontScale) {
-                    SlurryScreen(vm, onTheme = { themeMode = it }, onFontScale = { fontScale = it })
+                    SlurryScreen(
+                        vm, onTheme = { themeMode = it }, onFontScale = { fontScale = it },
+                        onShareText = ::shareText,
+                        onPickTaskFile = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
+                        onExportFile = { name, text ->
+                            pendingExport = name to text
+                            exportLauncher.launch(name)
+                        },
+                        taskIncoming = pendingTask,
+                        onTaskConfirmed = { raw ->
+                            try {
+                                vm.importTask(TaskTransfer.parseIncoming(raw))
+                                pendingTask = null
+                                tabRequestJournal = true
+                            } catch (ex: Exception) {
+                                pendingTaskError = ex.message ?: "Не удалось прочитать задание"
+                            }
+                        },
+                        onTaskDismiss = { pendingTask = null; pendingTaskError = "" },
+                        taskError = pendingTaskError,
+                        openJournal = tabRequestJournal,
+                        onJournalOpened = { tabRequestJournal = false },
+                    )
                 }
             }
         } catch (e: Throwable) {
             Log.e("SlurryCalc", "UI init failed", e)
             showFatalError(e)
         }
+    }
+
+    private var pendingTaskError by mutableStateOf("")
+    private var tabRequestJournal by mutableStateOf(false)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        intent ?: return
+        when (intent.action) {
+            Intent.ACTION_VIEW -> {
+                val data = intent.data ?: return
+                val payload = data.getQueryParameter("d") ?: data.fragment?.removePrefix("d=")
+                if (payload != null) {
+                    pendingTask = payload
+                } else if (data.scheme == "file" || data.scheme == "content") {
+                    readTaskFromUri(data)
+                }
+            }
+            Intent.ACTION_SEND -> {
+                val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+                val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                when {
+                    text != null -> pendingTask = text
+                    uri != null -> readTaskFromUri(uri)
+                }
+            }
+        }
+    }
+
+    private fun readTaskFromUri(uri: Uri) {
+        try {
+            val raw = contentResolver.openInputStream(uri)?.use { stream ->
+                stream.readBytes().toString(Charsets.UTF_8)
+            } ?: return
+            pendingTask = raw
+        } catch (e: Exception) {
+            pendingTask = null
+            pendingTaskError = "Не удалось открыть файл: ${e.message}"
+        }
+    }
+
+    private fun writeExportedText(uri: Uri) {
+        val (name, text) = pendingExport ?: return
+        pendingExport = null
+        try {
+            contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+        } catch (_: Exception) { }
+    }
+
+    private fun shareText(title: String, text: String) {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, title)
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        startActivity(Intent.createChooser(send, "Передать задание"))
     }
 
     private fun showFatalError(e: Throwable) {
@@ -132,15 +248,32 @@ fun SlurryScreen(
     vm: SlurryViewModel,
     onTheme: (AppThemeMode) -> Unit,
     onFontScale: (Float) -> Unit,
+    onShareText: (String, String) -> Unit = { _, _ -> },
+    onPickTaskFile: () -> Unit = {},
+    onExportFile: (String, String) -> Unit = { _, _ -> },
+    taskIncoming: String? = null,
+    taskError: String = "",
+    onTaskConfirmed: (String) -> Unit = {},
+    onTaskDismiss: () -> Unit = {},
+    openJournal: Boolean = false,
+    onJournalOpened: () -> Unit = {},
 ) {
-    var tab by remember { mutableStateOf(0) }
+    var tab by remember { mutableStateOf(if (vm.simpleMode) 2 else 0) }
     var settingsOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(openJournal) { if (openJournal) { tab = 2; onJournalOpened() } }
     Scaffold(
         topBar = {
             Column {
                 TopAppBar(
                     title = { Text("SlurryCalc", fontWeight = FontWeight.Bold) },
                     actions = {
+                        // упрощённый режим: только внесение данных по готовому заданию
+                        FilterChip(
+                            selected = vm.simpleMode,
+                            onClick = { vm.toggleSimpleMode(!vm.simpleMode); if (!vm.simpleMode) tab = 0 },
+                            label = { Text(if (vm.simpleMode) "Простой" else "Полный") },
+                        )
+                        Spacer(Modifier.width(4.dp))
                         TextButton(onClick = { settingsOpen = true }) { Text("Тема") }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -153,7 +286,10 @@ fun SlurryScreen(
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.primary,
                 ) {
-                    listOf("Расчёт", "Материалы", "Журнал").forEachIndexed { i, t ->
+                    val tabs = if (vm.simpleMode)
+                        listOf("Задания", "Журнал")
+                    else listOf("Расчёт", "Материалы", "Журнал", "Задания")
+                    tabs.forEachIndexed { i, t ->
                         Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) })
                     }
                 }
@@ -168,15 +304,60 @@ fun SlurryScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            when (tab) {
-                0 -> CalcTab(vm)
-                1 -> MaterialsTab(vm)
-                2 -> JournalTab(vm)
+            val simple = vm.simpleMode
+            when {
+                simple && tab == 0 -> TasksTab(vm, onShareText, onPickTaskFile, onExportFile)
+                simple && tab == 1 -> JournalTab(vm, onShareText, onExportFile, readOnlyEditor = false)
+                !simple && tab == 0 -> CalcTab(vm)
+                !simple && tab == 1 -> MaterialsTab(vm)
+                !simple && tab == 2 -> JournalTab(vm, onShareText, onExportFile, readOnlyEditor = false)
+                !simple && tab == 3 -> TasksTab(vm, onShareText, onPickTaskFile, onExportFile)
             }
             Spacer(modifier = Modifier.height(24.dp))
         }
         SettingsDialog(vm, settingsOpen, { settingsOpen = false }, onTheme, onFontScale)
+        IncomingTaskDialog(taskIncoming, taskError, onTaskConfirmed, onTaskDismiss)
     }
+}
+
+/** Диалог подтверждения входящего задания (из QR/файла/ссылки/текста) */
+@Composable
+private fun IncomingTaskDialog(
+    raw: String?,
+    error: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (raw == null && error.isEmpty()) return
+    val preview = if (raw != null) try {
+        val e = TaskTransfer.parseIncoming(raw)
+        buildString {
+            append("«").append(e.title).append("»\n")
+            append(e.componentNames.joinToString(" + "))
+            append(" · СО ").append(fmt(e.plannedDryContentPct, 1)).append(" %")
+            append(" · партия ").append(fmt(e.plannedWetMassG, 0)).append(" г")
+            if (e.steps.isNotEmpty()) append("\nЭтапов: ").append(e.steps.size)
+        }
+    } catch (ex: Exception) { "⚠ ${ex.message}" } else ""
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (raw != null) "Входящее задание" else "Ошибка импорта") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (raw != null) {
+                    Text(preview, style = MaterialTheme.typography.bodyMedium)
+                    Text("Задание сохранится в журнал как «задание на выполнение». Расчёт недоступен — только внесение факта и результатов.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
+            }
+        },
+        confirmButton = {
+            if (raw != null) Button(onClick = { onConfirm(raw) }) { Text("Принять") }
+            else TextButton(onClick = onDismiss) { Text("Закрыть") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
+    )
 }
 
 /** Диалог настроек: тема и размер шрифта */
@@ -245,6 +426,8 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
 
 /**
  * Поле ввода: подпись — НАД полем, короткая подсказка/единицы — СПРАВА от подписи.
+ * maxLines в тексте поля и wordBreak по словам — чтобы на прошивках с крупным
+ * системным шрифтом (ColorOS/OxygenOS «Максимальный») ничего не съезжало.
  */
 @Composable
 fun LabeledField(
@@ -263,10 +446,14 @@ fun LabeledField(
         ) {
             Text(label, style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false))
             if (!hint.isNullOrBlank()) {
                 Text(hint, style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(start = 6.dp).weight(1f, fill = false))
             }
         }
@@ -276,8 +463,33 @@ fun LabeledField(
             onValueChange = onValueChange,
             singleLine = singleLine,
             modifier = Modifier.fillMaxWidth(),
-            textStyle = MaterialTheme.typography.bodyMedium,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.None,
+                ),
+                
+            ),
         )
+    }
+}
+
+/** Строка результата: метка слева, значение справа; при тесноте значение переносится */
+@Composable
+private fun InfoRow(label: String, value: String, valueColor: androidx.compose.ui.graphics.Color? = null) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f, fill = false))
+        Text(value, style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = valueColor ?: MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.End,
+            modifier = Modifier.padding(start = 8.dp))
     }
 }
 
@@ -306,6 +518,17 @@ private fun ChipFlow(names: List<String>, selected: String?, onSelect: (String) 
 
 @Composable
 private fun CalcTab(vm: SlurryViewModel) {
+    if (vm.simpleMode) {
+        // упрощённый режим: расчёт выключен, только внесение данных по готовому заданию
+        SectionCard("Упрощённый режим включён") {
+            Text(
+                "Калькулятор замеса недоступен. Работайте по готовому заданию: вкладка «Задания» — " +
+                        "принять/открыть полученное задание, «Журнал» — внести фактические массы и результаты.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        return
+    }
     PresetsCard(vm)
     SolidsCard(vm)
     SolventCard(vm)
@@ -865,28 +1088,68 @@ private fun MaterialRow(m: MaterialEntry, onDelete: (() -> Unit)?) {
 // ============================ TAB: ЖУРНАЛ ============================
 
 @Composable
-private fun JournalTab(vm: SlurryViewModel) {
+private fun JournalTab(
+    vm: SlurryViewModel,
+    onShareText: (String, String) -> Unit = { _, _ -> },
+    onExportFile: (String, String) -> Unit = { _, _ -> },
+    readOnlyEditor: Boolean = false,
+) {
+    SectionCard("Экспорт журнала") {
+        Text(
+            "Выгрузка результатов замеса со всеми режимами: план, фактические массы, этапы " +
+                    "смешивания, вязкость/плотность/перетир/вердикт.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = {
+                val text = buildString {
+                    vm.journal.forEach { e ->
+                        append(TaskTransfer.exportText(e, vm.actualFor(e)))
+                        append("\n========================================\n\n")
+                    }
+                }
+                onShareText("Журнал замесов", text)
+            }, modifier = Modifier.weight(1f)) { Text("текст →") }
+            OutlinedButton(onClick = {
+                onExportFile("journal-${System.currentTimeMillis()}.csv", TaskTransfer.exportCsv(vm.journal.toList()))
+            }, modifier = Modifier.weight(1f)) { Text("CSV ↓") }
+        }
+    }
     if (vm.journal.isEmpty()) {
         SectionCard("Журнал замесов пуст") {
             Text("Сохраните расчёт во вкладке «Расчёт» кнопкой «→ В журнал замесов», затем заполните этапы, фактические массы и результаты.")
         }
         return
     }
-    vm.journal.forEach { e ->
-        JournalEntryCard(vm, e)
+    // сначала активные задания (не выполненные), потом остальные
+    val ordered = vm.journal.sortedWith(compareBy({ !(it.isTask && !it.hasActuals()) }, { -it.timestampMs }))
+    ordered.forEach { e ->
+        JournalEntryCard(vm, e, onShareText, onExportFile)
     }
 }
 
 @Composable
-private fun JournalEntryCard(vm: SlurryViewModel, e: JournalEntry) {
+private fun JournalEntryCard(
+    vm: SlurryViewModel,
+    e: JournalEntry,
+    onShareText: (String, String) -> Unit,
+    onExportFile: (String, String) -> Unit,
+) {
     var expanded by remember(e.id, e.timestampMs) { mutableStateOf(false) }
-    SectionCard("${e.dateLabel()} · ${e.title}") {
+    val openTask = e.isTask && !e.hasActuals()
+    SectionCard((if (e.isTask) "📋 ЗАДАНИЕ · " else "") + "${e.dateLabel()} · ${e.title}") {
         Text(e.recipeSummary, style = MaterialTheme.typography.bodySmall)
         Text(
             "План: ${fmt(e.plannedWetMassG, 0)} г · режим: ${vm.regimeName(e.mixingRegimeId)}" +
-                    (if (e.hasActuals()) " · ФАКТ внесён ✓" else " · факт не внесён"),
+                    (if (e.hasActuals()) " · ФАКТ внесён ✓"
+                     else if (e.isTask) " · ожидает выполнения" else " · факт не внесён"),
             style = MaterialTheme.typography.bodySmall,
-            color = if (e.hasActuals()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            color = when {
+                e.hasActuals() -> MaterialTheme.colorScheme.primary
+                e.isTask -> MaterialTheme.colorScheme.tertiary
+                else -> MaterialTheme.colorScheme.error
+            },
         )
         if (e.steps.isNotEmpty()) {
             Text(
@@ -897,18 +1160,93 @@ private fun JournalEntryCard(vm: SlurryViewModel, e: JournalEntry) {
             )
         }
         Spacer(Modifier.height(6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedButton(onClick = { expanded = !expanded }) {
-                Text(if (expanded) "свернуть" else "этапы, факт и результаты…")
+                Text(if (expanded) "свернуть"
+                     else if (openTask) "выполнить задание…" else "этапы, факт и результаты…")
             }
-            TextButton(onClick = { vm.loadFromJournal(e) }) { Text("в калькулятор") }
-            TextButton(onClick = { vm.deleteJournalEntry(e.id) }) { Text("удалить") }
+            if (!vm.simpleMode && !e.isTask) {
+                TextButton(onClick = { vm.loadFromJournal(e) }) { Text("в калькулятор") }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+            TextButton(onClick = {
+                onShareText(e.title, TaskTransfer.exportText(e, vm.actualFor(e)))
+            }) { Text("отчёт →") }
+            TextButton(onClick = {
+                onShareText(e.title, TaskTransfer.toJsonCompact(e))
+            }) { Text("задание QR/текст →") }
+            TextButton(onClick = {
+                onExportFile(TaskTransfer.taskFileName(e), TaskTransfer.toJsonFile(e))
+            }) { Text("файл ↓") }
+            TextButton(onClick = { vm.deleteJournalEntry(e.id) }) {
+                Text("удалить", color = MaterialTheme.colorScheme.error)
+            }
         }
         if (expanded) {
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
-            JournalStepsEditor(vm, e)
+            if (openTask || vm.simpleMode) {
+                // исполнитель: карта этапов только для чтения + отметки выполнения
+                TaskStepsView(vm, e)
+            } else {
+                JournalStepsEditor(vm, e)
+            }
             ActualEditor(vm, e)
+        }
+    }
+}
+
+/** Карта этапов в режиме исполнителя: параметры видны, можно отметить статус */
+@Composable
+private fun TaskStepsView(vm: SlurryViewModel, e: JournalEntry) {
+    Spacer(Modifier.height(6.dp))
+    Text("Карта этапов (по заданию)", style = MaterialTheme.typography.titleSmall)
+    if (e.steps.isEmpty()) {
+        Text("Этапов нет — опишите процесс в комментарии ниже.", style = MaterialTheme.typography.bodySmall)
+    }
+    e.steps.forEachIndexed { i, s ->
+        val status = e.stepStatuses.getOrElse(i) { "" }
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.25f)),
+        ) {
+            Column(Modifier.padding(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${i + 1}", fontWeight = FontWeight.Bold,
+                        color = if (status.isNotBlank()) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outline)
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(s.action, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text(
+                            listOfNotNull(
+                                s.tool.label,
+                                s.disperserRpm?.let { "дисп. $it об/мин" },
+                                s.bladeRpm?.let { "лопасти $it об/мин" },
+                                s.durationMin?.let { "~${fmt(it, 0)} мин" },
+                                s.tempC?.let { "T° ≤ ${fmt(it, 0)} °C" },
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (s.comment.isNotBlank())
+                            Text(s.comment, style = MaterialTheme.typography.bodySmall,
+                                maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("✓ выполнено", "⚠ отклонение", "— пропущено").forEach { lbl ->
+                        val key = lbl.substringAfter(' ')
+                        FilterChip(
+                            selected = status == key,
+                            onClick = { vm.toggleStepStatus(e, i, key) },
+                            label = { Text(lbl, style = MaterialTheme.typography.labelMedium) },
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -1103,6 +1441,134 @@ private fun ActualEditor(vm: SlurryViewModel, e: JournalEntry) {
         calc.onFailure { err ->
             Spacer(Modifier.height(6.dp))
             Text(err.message ?: "", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+// ============================ TAB: ЗАДАНИЯ (передача «начальник → исполнитель») ============================
+
+/**
+ * Вкладка «Задания»: отправка планов исполнителю (QR / файл / текст через мессенджер)
+ * и приём входящих заданий (файл или вставка текста/ссылки из буфера обмена).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TasksTab(
+    vm: SlurryViewModel,
+    onShareText: (String, String) -> Unit,
+    onPickTaskFile: () -> Unit,
+    onExportFile: (String, String) -> Unit,
+) {
+    SectionCard("Как это работает") {
+        Text(
+            "Начальник отправляет план замеса исполнителю одним из способов:\n" +
+                    "  • QR-код — исполнитель сканирует камерой (без интернета); подходит для коротких заданий;\n" +
+                    "  • Файл .slurrytask.json — через Telegram / Bluetooth / Quick Share; открывается в приложении;\n" +
+                    "  • Текст/ссылка — копирование в буфер, вставляется на этой вкладке.\n" +
+                    "Исполнитель включает чип «Простой» в шапке: калькулятор скрывается, остаются задания и журнал. " +
+                    "Если у исполнителя iPhone/другая ОС — отправьте «отчёт →» (текст) или CSV: читается в любом редакторе.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+
+    // ---- приём задания ----
+    var pasteText by remember { mutableStateOf("") }
+    SectionCard("Принять задание") {
+        LabeledField(pasteText, { pasteText = it }, "Вставьте текст задания",
+            "JSON, base64 из QR или ссылка slurrycalc://…", singleLine = false)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = {
+                if (pasteText.isNotBlank()) {
+                    try {
+                        vm.importTask(TaskTransfer.parseIncoming(pasteText)); pasteText = ""
+                    } catch (ex: Exception) {
+                        pasteText = "⚠ ${ex.message ?: "не удалось прочитать"}"
+                    }
+                }
+            }, modifier = Modifier.weight(1f)) { Text("импортировать") }
+            OutlinedButton(onClick = onPickTaskFile, modifier = Modifier.weight(1f)) {
+                Text("из файла…")
+            }
+        }
+    }
+
+    // ---- отправка задания ----
+    val sendable = vm.journal.filter { !it.isTask || true } // любой записи можно отправить план
+    SectionCard("Отправить задание исполнителю (${sendable.size})") {
+        if (sendable.isEmpty()) {
+            Text("Нет записей в журнале — сначала сохраните расчёт («→ В журнал замесов»).",
+                style = MaterialTheme.typography.bodySmall)
+        }
+        sendable.take(20).forEach { e ->
+            var showQr by remember(e.id) { mutableStateOf(false) }
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.22f)),
+            ) {
+                Column(Modifier.padding(10.dp)) {
+                    Text(e.title, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
+                    Text(e.recipeSummary, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(6.dp))
+                    val b64 = remember(e) { TaskTransfer.encodeBase64Url(TaskTransfer.toJsonCompact(e)) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                        TextButton(onClick = { showQr = !showQr }) { Text(if (showQr) "скрыть QR" else "QR →") }
+                        TextButton(onClick = {
+                            onShareText(e.title, "slurrycalc://task?d=$b64")
+                        }) { Text("ссылка →") }
+                        TextButton(onClick = { onShareText(e.title, TaskTransfer.toJsonCompact(e)) }) {
+                            Text("json →")
+                        }
+                        TextButton(onClick = {
+                            onExportFile(TaskTransfer.taskFileName(e), TaskTransfer.toJsonFile(e))
+                        }) { Text("файл ↓") }
+                    }
+                    if (!TaskQr.fitsReliable(b64)) {
+                        Text("⚠ Задание длинное (${b64.length} б) — QR может не считаться с расстояния, " +
+                                "лучше отправить файл или ссылку.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.tertiary)
+                    }
+                    if (showQr) {
+                        val bmp = remember(b64) { TaskQr.encode("slurrycalc://task?d=$b64", 512) }
+                        if (bmp != null) {
+                            Spacer(Modifier.height(6.dp))
+                            Box(
+                                modifier = Modifier.align(Alignment.CenterHorizontally).background(androidx.compose.ui.graphics.Color.White).padding(8.dp),
+                            ) {
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = "QR задания",
+                                    modifier = Modifier.size(240.dp),
+                                    contentScale = ContentScale.Fit,
+                                )
+                            }
+                            Text("Сканируйте камерой телефона исполнителя (Google Camera умеет открывать ссылки).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            Text("Данные не помещаются в QR — используйте файл/ссылку.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- активные задания исполнителю ----
+    val openTasks = vm.journal.filter { it.isTask && !it.hasActuals() }
+    if (openTasks.isNotEmpty()) {
+        SectionCard("Активные задания (${openTasks.size})") {
+            Text("Откройте карточку во вкладке «Журнал», отметьте этапы и внесите фактические массы.",
+                style = MaterialTheme.typography.bodySmall)
+            openTasks.forEach { e ->
+                JournalEntryCard(vm, e, onShareText, onExportFile)
+            }
         }
     }
 }

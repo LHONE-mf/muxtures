@@ -46,6 +46,12 @@ data class JournalEntry(
     val measuredDensityGcm3: Double? = null,
     val comment: String = "",
     val verdict: String = "",                // OK / на доработку / брак
+    // ---- передача заданий между телефонами ----
+    /** true — задание получено от другого пользователя (режим исполнителя):
+     *  расчёт недоступен, только внесение факта и результатов */
+    val isTask: Boolean = false,
+    /** статус задания для режимов смешивания («выполнено»/«пропущено» + комментарий) */
+    val stepStatuses: List<String> = emptyList(),
 ) {
     fun dateLabel(): String =
         SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.US).format(Date(timestampMs))
@@ -169,6 +175,9 @@ class JournalStore(context: Context) {
         put("grind", e.grindLevel); put("grindUm", e.grindMaxParticleUm ?: JSONObject.NULL)
         put("measDens", e.measuredDensityGcm3 ?: JSONObject.NULL)
         put("comment", e.comment); put("verdict", e.verdict)
+        if (e.isTask) put("isTask", true)
+        if (e.stepStatuses.isNotEmpty())
+            put("stepStatuses", JSONArray().apply { e.stepStatuses.forEach { put(it) } })
     }
 
     private fun fromJson(o: JSONObject): JournalEntry {
@@ -204,6 +213,10 @@ class JournalStore(context: Context) {
             measuredDensityGcm3 = optD("measDens"),
             comment = o.optString("comment"),
             verdict = o.optString("verdict"),
+            isTask = o.optBoolean("isTask", false),
+            stepStatuses = o.optJSONArray("stepStatuses")?.let { a ->
+                (0 until a.length()).map { a.optString(it) }
+            } ?: emptyList(),
         )
     }
 }

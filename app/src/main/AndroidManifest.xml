@@ -22,8 +22,37 @@
         </activity>
         <activity
             android:name=".ui.MainActivity"
-            android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <!-- Приём заданий: ссылка slurrycalc://task?d=... -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="slurrycalc" />
+            </intent-filter>
+            <!-- Приём файлов задания *.slurrytask.json / application/json -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/json" />
+                <data android:pathPattern=".*\\.slurrytask\\.json" />
+                <data android:pathPattern=".*\\..*\\.slurrytask\\.json" />
+            </intent-filter>
+            <!-- Приём текста/файла через «Поделиться» -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/json" />
+            </intent-filter>
+        </activity>
     </application>
 
 </manifest>

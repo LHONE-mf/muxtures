@@ -76,6 +76,12 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
     var result by mutableStateOf<SlurryResult?>(null); private set
     var error by mutableStateOf(""); private set
 
+    /** Упрощённый режим («исполнитель»): калькулятор скрыт, только задания и внесение данных */
+    var simpleMode by mutableStateOf(false)
+        private set
+
+    fun toggleSimpleMode(v: Boolean) { simpleMode = v }
+
     val journal = mutableStateListOf<JournalEntry>().apply { addAll(journalStore.all()) }
 
     init {
@@ -305,6 +311,20 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun actualFor(e: JournalEntry): BatchMath.ActualBatch? = e.computeActual()
+
+    /** Принять входящее задание: добавить запись (isTask=true) в начало журнала */
+    fun importTask(e: JournalEntry) {
+        val saved = journalStore.add(e.copy(id = 0, isTask = true))
+        journal.add(0, saved)
+    }
+
+    /** Отметить статус этапа i в записи журнала («выполнено»/«отклонение»/«пропущено», повторное нажатие снимает) */
+    fun toggleStepStatus(e: JournalEntry, index: Int, key: String) {
+        val list = ArrayList(e.stepStatuses)
+        while (list.size <= index) list.add("")
+        list[index] = if (list[index] == key) "" else key
+        updateJournalEntry(e.copy(stepStatuses = list))
+    }
 
     fun regimeName(nameOrId: String): String =
         BuiltinRegimes.info(nameOrId)?.name ?: nameOrId
