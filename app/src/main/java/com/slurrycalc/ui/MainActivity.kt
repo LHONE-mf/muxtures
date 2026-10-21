@@ -3,6 +3,7 @@ package com.slurrycalc.ui
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.content.res.Configuration
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -98,6 +99,17 @@ class MainActivity : ComponentActivity() {
     ) { uri: Uri? -> if (uri != null) writeExportedText(uri) }
 
     private var pendingExport: Pair<String, String>? = null  // fileName to text
+
+    /**
+     * Нейтрализуем системный масштаб шрифта Oxygen OS / ColorOS: он по-разному применяется к
+     * OutlinedTextField (label/hint), TextButton и обычному Text — из-за чего надписи «съезжают»
+     * и обрезаются. Приложение остаётся читаемым благодаря собственному ползунку размера шрифта.
+     */
+    override fun attachBaseContext(newBase: android.content.Context) {
+        val cfg = Configuration(newBase.resources.configuration)
+        cfg.fontScale = 1.0f
+        super.attachBaseContext(newBase.createConfigurationContext(cfg))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
