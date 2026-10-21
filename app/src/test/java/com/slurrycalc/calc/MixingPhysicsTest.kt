@@ -11,14 +11,43 @@ class MixingPhysicsTest {
         assertEquals(5.235988, MixingPhysics.tipSpeed(50.0, 2000.0), 1e-5)
     }
 
-    @Test fun `reynolds transitional`() {
-        // Строго: Re = rho*v_tip*d/mu c v_tip = pi*d*n => 261.8 (переходный режим).
-        // В SPEC 5.3 указано 83.3 — это значение соответствует v_tip ~1.67 м/с
-        // (~1600 об/мин), т.е. числа в примере SPEC внутренне несогласованы.
-        // Формула в коде верна; расхождение зафиксировано в AUDIT.md.
-        val re = MixingPhysics.reynolds(2000.0, MixingPhysics.tipSpeed(50.0, 2000.0), 0.05, 2.0)
-        assertEquals(261.8, re, 0.1)
+    @Test fun `reynolds impeller matches SPEC 5 point 3`() {
+        // Справочная дефиниция для мешалки (McCabe/Coulson&Perry): Re = rho*N*d^2/mu.
+        // d = 50 мм, 2000 об/мин, rho = 2000 кг/м3, mu = 2 Па·с => Re = 83,33 — ровно как в SPEC 5.3.
+        val re = MixingPhysics.reynoldsImpeller(2000.0, 2000.0, 50.0, 2.0)
+        assertEquals(83.3333, re, 1e-3)
         assertTrue("режим переходный", MixingPhysics.flowRegime(re) == "переходный")
+    }
+
+    @Test fun `tip-speed reynolds is pi times impeller reynolds`() {
+        // Реальная причина расхождения в исходном тексте SPEC: там Re считался по v_tip
+        // (rho*v_tip*d/mu = pi*rho*N*d^2/mu), что дало бы 261,8 при тех же данных.
+        val reTip = MixingPhysics.reynoldsFromTipSpeed(2000.0, MixingPhysics.tipSpeed(50.0, 2000.0), 0.05, 2.0)
+        val reImp = MixingPhysics.reynoldsImpeller(2000.0, 2000.0, 50.0, 2.0)
+        assertEquals(Math.PI, reTip / reImp, 1e-9)
+        assertEquals(261.7994, reTip, 1e-3)
+    }
+
+    @Test fun `metzner otto reynolds for power-law slurry`() {
+        // Псевдопластичная суспензия K=1.5 Па·с^n, n=0.7, Rushton d=50 мм, 2000 об/мин:
+        // gamma_s = 11.5*N = 383.33 с^-1, eta_eff = K*gamma_s^(n-1) = 0.2518 Па·с,
+        // Re_MO = rho*N*d^2/eta_eff = 661.96 -> переходный режим (Re < 150 — не ламинарный!).
+        // Это ключевая физическая иллюстрация: псевдопластик разжижается в зоне мешалки,
+        // и его Re на 2 порядка выше, чем по «низкосдвиговой» вязкости.
+        val etaEff = MixingPhysics.effectiveViscosity(1.5, 0.7, 11.5 * 2000.0 / 60.0)
+        assertEquals(0.25178, etaEff, 1e-4)
+        val re = MixingPhysics.reynoldsMetznerOtto(2000.0, 2000.0, 50.0, 1.5, 0.7)
+        assertEquals(661.96, re, 0.05)
+        assertTrue("переходный", MixingPhysics.flowRegime(re) == "переходный")
+    }
+
+    @Test fun `flow regime boundaries classic`() {
+        // Классические пороги для импеллерного Re: ламинарный <10, переходный 10..10^4, >10^4 турбулентный.
+        assertEquals("ламинарный", MixingPhysics.flowRegime(9.9))
+        assertEquals("переходный", MixingPhysics.flowRegime(10.0))
+        assertEquals("переходный", MixingPhysics.flowRegime(83.33))   // значение SPEC 5.3
+        assertEquals("переходный", MixingPhysics.flowRegime(661.96))  // Re Metzner-Ott псевдопластика
+        assertEquals("турбулентный", MixingPhysics.flowRegime(10000.1))
     }
 
     @Test fun `gap shear rate`() {
