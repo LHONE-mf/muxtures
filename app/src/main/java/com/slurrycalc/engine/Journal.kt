@@ -31,7 +31,7 @@ data class JournalEntry(
     val mixingRegimeId: String,          // legacy: основной режим (id или имя)
     val mixingDurationMin: Double?,
     val mixingNotes: String,             // комментарии процесса (порядок загрузки и т.п.)
-    /** пошаговая карта замеса: действие, обороты диспергатора/лопастей, время, T°, комментарий */
+    /** пошаговая карта замеса: действие, обороты диспергатора/лопастей, время, T°, вакуум, комментарий */
     val steps: List<MixingStep> = emptyList(),
     // ---- факт: реальные взвешенные массы ----
     val actualComponentMassesG: List<Double?> = componentNames.map { null },
@@ -143,6 +143,7 @@ class JournalStore(context: Context) {
         put("blader", s.bladeRpm ?: JSONObject.NULL)
         put("dur", s.durationMin ?: JSONObject.NULL)
         put("temp", s.tempC ?: JSONObject.NULL)
+        if (s.vacuum) put("vac", true)
         put("cmt", s.comment)
     }
 
@@ -153,6 +154,7 @@ class JournalStore(context: Context) {
         bladeRpm = if (o.isNull("blader")) null else o.optInt("blader").takeIf { it > 0 },
         durationMin = if (o.isNull("dur")) null else o.optDouble("dur").takeIf { !it.isNaN() },
         tempC = if (o.isNull("temp")) null else o.optDouble("temp").takeIf { !it.isNaN() },
+        vacuum = o.optBoolean("vac", false),
         comment = o.optString("cmt"),
     )
 

@@ -197,7 +197,7 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
         list.forEach { steps.add(it.copy(id = newStepId())) }
     }
 
-    /** применить параметры выбранного режима к этапу (подстановка подсказок) */
+    /** быстрый пресет: подставить параметры выбранного режима в этап */
     fun applyRegimeToStep(stepIndex: Int, regimeName: String) {
         if (stepIndex !in steps.indices) return
         val custom = regimeStore.byName(regimeName)
@@ -208,7 +208,16 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
             bladeRpm = custom?.bladeRpmHint ?: steps[stepIndex].bladeRpm,
             durationMin = custom?.timeMinHint ?: steps[stepIndex].durationMin,
             tempC = custom?.tempLimitC ?: steps[stepIndex].tempC,
+            vacuum = (custom?.tool ?: builtin?.tool) == MixToolType.VACUUM || steps[stepIndex].vacuum,
         )
+    }
+
+    /** Добавить режим смешивания вручную во встроенный список пользовательских режимов */
+    fun addCustomRegime(
+        name: String, tool: MixToolType, dispr: Int?, blader: Int?,
+        timeMin: Double?, tempLimit: Double?, description: String,
+    ) {
+        regimeStore.add(name, tool, dispr, blader, timeMin, tempLimit, description)
     }
 
     fun saveStepAsRegime(step: MixingStep) {

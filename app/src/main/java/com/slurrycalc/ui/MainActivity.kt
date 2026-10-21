@@ -825,6 +825,28 @@ private fun StepEditor(
     var comment by remember(step.id) { mutableStateOf(step.comment) }
     var toolExpanded by remember { mutableStateOf(false) }
     var regimeExpanded by remember { mutableStateOf(false) }
+    var addRegimeDialog by remember(step.id) { mutableStateOf(false) }
+
+    if (addRegimeDialog) {
+        AddRegimeDialog(
+            presetName = step.action,
+            presetTool = step.tool,
+            presetDispr = dispr,
+            presetBlader = blader,
+            presetDur = dur,
+            presetTemp = temp,
+            presetVacuum = step.vacuum,
+            presetDesc = comment,
+            onDismiss = { addRegimeDialog = false },
+            onSave = { name, tool, d, b, t, tc, vac, desc ->
+                vm.regimeStore.add(name, tool, parseI(d), parseI(b), parseD(t), parseD(tc), desc)
+                // сразу применим параметры нового режима к этому этапу
+                onUpdate { s -> s.copy(tool = tool, disperserRpm = parseI(d), bladeRpm = parseI(b),
+                    durationMin = parseD(t), tempC = parseD(tc), vacuum = vac) }
+                addRegimeDialog = false
+            },
+        )
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -873,11 +895,23 @@ private fun StepEditor(
                 LabeledField(dur, {
                     dur = it
                     onUpdate { s -> s.copy(durationMin = parseD(it)) }
-                }, "Длительность", "мин", Modifier.weight(1f))
+                }, "Время перемешивания", "мин", Modifier.weight(1f))
                 LabeledField(temp, {
                     temp = it
                     onUpdate { s -> s.copy(tempC = parseD(it)) }
                 }, "Температура", "°C", Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(4.dp))
+            // наличие вакуума на этапе
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = step.vacuum,
+                    onCheckedChange = { v -> onUpdate { s -> s.copy(vacuum = v) } },
+                )
+                Text("Вакуум (дегазация / работа под разрежением)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (step.vacuum) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Spacer(Modifier.height(6.dp))
             LabeledField(comment, { comment = it; onUpdate { s -> s.copy(comment = comment) } },
@@ -893,6 +927,7 @@ private fun StepEditor(
                     TextButton(onClick = { onMove(+1) }, enabled = canDown) { Text("↓") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { addRegimeDialog = true }) { Text("+ режим") }
                     TextButton(onClick = onSaveAsRegime) { Text("→ свой режим") }
                     TextButton(onClick = onRemove) {
                         Text("×", color = MaterialTheme.colorScheme.error)
@@ -910,13 +945,15 @@ private fun StepEditor(
                             regimeExpanded = false
                             val custom = vm.regimeStore.byName(rn)
                             val builtin = BuiltinRegimes.info(rn)
+                            val toolNow = custom?.tool ?: builtin?.tool ?: null
                             onUpdate { s ->
                                 s.copy(
-                                    tool = custom?.tool ?: builtin?.tool ?: s.tool,
+                                    tool = toolNow ?: s.tool,
                                     disperserRpm = custom?.disperserRpmHint ?: s.disperserRpm,
                                     bladeRpm = custom?.bladeRpmHint ?: s.bladeRpm,
                                     durationMin = custom?.timeMinHint ?: s.durationMin,
                                     tempC = custom?.tempLimitC ?: s.tempC,
+                                    vacuum = toolNow == MixToolType.VACUUM || s.vacuum,
                                 )
                             }
                         })
@@ -925,6 +962,73 @@ private fun StepEditor(
             }
         }
     }
+}
+
+/** Диалог ручного добавления режима смешивания (пресета параметров этапа) */
+@Composable
+private fun AddRegimeDialog(
+    presetName: String,
+    presetTool: MixToolType,
+    presetDispr: String,
+    presetBlader: String,
+    presetDur: String,
+    presetTemp: String,
+    presetVacuum: Boolean,
+    presetDesc: String,
+    onDismiss: () -> Unit,
+    onSave: (name: String, tool: MixToolType, dispr: String, blader: String,
+             dur: String, temp: String, vacuum: Boolean, desc: String) -> Unit,
+) {
+    var name by remember { mutableStateOf(presetName) }
+    var tool by remember { mutableStateOf(presetTool) }
+    var dispr by remember { mutableStateOf(presetDispr) }
+    var blader by remember { mutableStateOf(presetBlader) }
+    var dur by remember { mutableStateOf(presetDur) }
+    var temp by remember { mutableStateOf(presetTemp) }
+    var vacuum by remember { mutableStateOf(presetVacuum) }
+    var desc by remember { mutableStateOf(presetDesc) }
+    var toolExpanded by remember { mutableStateOf(false) }
+
+    AlertDialog(onDismissRequest = onDismiss, confirmButton = {
+        Button(onClick = { onSave(name, tool, dispr, blader, dur, temp, vacuum, desc) }) { Text("Сохранить режим") }
+    }, dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
+        title = { Text("Новый режим смешивания") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                LabeledField(name, { name = it }, "Название режима", "напр.: «Планетарная 2500/800»")
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { toolExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Оборудование: ${tool.label} ▾", maxLines = 1,
+                            style = MaterialTheme.typography.labelLarge)
+                    }
+                    DropdownMenu(expanded = toolExpanded, onDismissRequest = { toolExpanded = false }) {
+                        MixToolType.entries.forEach { t ->
+                            DropdownMenuItem(text = { Text(t.label) }, onClick = {
+                                toolExpanded = false; tool = t
+                            })
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LabeledField(dispr, { dispr = it }, "Обороты диспергатора", "об/мин", Modifier.weight(1f))
+                    LabeledField(blader, { blader = it }, "Обороты лопастей", "об/мин", Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LabeledField(dur, { dur = it }, "Время", "мин", Modifier.weight(1f))
+                    LabeledField(temp, { temp = it }, "T° (лимит)", "°C", Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = vacuum, onCheckedChange = { vacuum = it })
+                    Text("Вакуум", style = MaterialTheme.typography.bodyMedium)
+                }
+                Spacer(Modifier.height(6.dp))
+                LabeledField(desc, { desc = it }, "Описание", "что делает режим, особенности", singleLine = false)
+            }
+        })
 }
 
 @Composable
@@ -1198,13 +1302,14 @@ private fun JournalEntryCard(
         if (expanded) {
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
+            val journalDirty = remember(e.id, e.timestampMs) { mutableStateOf(false) }
             if (openTask || vm.simpleMode) {
                 // исполнитель: карта этапов только для чтения + отметки выполнения
                 TaskStepsView(vm, e)
             } else {
-                JournalStepsEditor(vm, e)
+                JournalStepsEditor(vm, e, journalDirty)
             }
-            ActualEditor(vm, e)
+            ActualEditor(vm, e, stepsDirty = journalDirty.value)
         }
     }
 }
@@ -1239,6 +1344,7 @@ private fun TaskStepsView(vm: SlurryViewModel, e: JournalEntry) {
                                 s.bladeRpm?.let { "лопасти $it об/мин" },
                                 s.durationMin?.let { "~${fmt(it, 0)} мин" },
                                 s.tempC?.let { "T° ≤ ${fmt(it, 0)} °C" },
+                                if (s.vacuum) "вакуум" else null,
                             ).joinToString(" · "),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1265,7 +1371,7 @@ private fun TaskStepsView(vm: SlurryViewModel, e: JournalEntry) {
 
 /** Редактирование карты этапов прямо в записи журнала: добавить/удалить/редактировать вручную */
 @Composable
-private fun JournalStepsEditor(vm: SlurryViewModel, e: JournalEntry) {
+private fun JournalStepsEditor(vm: SlurryViewModel, e: JournalEntry, stepsDirty: MutableState<Boolean>? = null) {
     // локальная копия списка этапов записи
     val localSteps = remember(e.id, e.timestampMs) { mutableStateListOf(*e.steps.toTypedArray()) }
     var dirty by remember(e.id, e.timestampMs) { mutableStateOf(false) }
@@ -1323,6 +1429,7 @@ private fun JournalStepsEditor(vm: SlurryViewModel, e: JournalEntry) {
             val time = localSteps.sumOf { it.durationMin ?: 0.0 }.takeIf { it > 0 }
             vm.updateJournalEntry(e.copy(steps = localSteps.toList(), mixingDurationMin = time))
             dirty = false
+            stepsDirty?.value = true   // чтобы редактор факта перезахватил обновлённую запись
         }) { Text("Сохранить карту этапов") }
     }
 }

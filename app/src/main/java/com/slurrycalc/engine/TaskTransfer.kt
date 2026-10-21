@@ -89,6 +89,7 @@ object TaskTransfer {
               .append(s.bladeRpm?.toString() ?: "null").append(',')
               .append(d(s.durationMin, 1)).append(',')
               .append(d(s.tempC, 1)).append(',')
+              .append(if (s.vacuum) 1 else 0).append(',')
               .append(esc(s.comment)).append(']')
         }
         sb.append("]}")
@@ -111,7 +112,7 @@ object TaskTransfer {
         o.optJSONArray("steps")?.let { a ->
             for (i in 0 until a.length()) {
                 val s = a.get(i)
-                if (s is JSONArray) {   // компактный: [action, tool, dispr, blader, dur, temp, cmt]
+                if (s is JSONArray) {   // компактный: [action, tool, dispr, blader, dur, temp, vac, cmt]
                     stepsList.add(MixingStep(
                         id = 0L,
                         action = s.optString(0, ""),
@@ -120,7 +121,8 @@ object TaskTransfer {
                         bladeRpm = if (s.isNull(3)) null else s.optInt(3).takeIf { it > 0 },
                         durationMin = if (s.isNull(4)) null else s.optDouble(4).takeIf { !it.isNaN() },
                         tempC = if (s.isNull(5)) null else s.optDouble(5).takeIf { !it.isNaN() },
-                        comment = s.optString(6, ""),
+                        vacuum = s.optInt(6, 0) == 1,
+                        comment = s.optString(7, ""),
                     ))
                 } else if (s is JSONObject) {  // полный формат файла
                     stepsList.add(MixingStep(
@@ -131,6 +133,7 @@ object TaskTransfer {
                         bladeRpm = if (s.isNull("blader")) null else s.optInt("blader").takeIf { it > 0 },
                         durationMin = if (s.isNull("dur")) null else s.optDouble("dur").takeIf { !it.isNaN() },
                         tempC = if (s.isNull("temp")) null else s.optDouble("temp").takeIf { !it.isNaN() },
+                        vacuum = s.optBoolean("vac", false),
                         comment = s.optString("cmt"),
                     ))
                 }
@@ -202,6 +205,7 @@ object TaskTransfer {
                 put("blader", s.bladeRpm ?: JSONObject.NULL)
                 put("dur", s.durationMin ?: JSONObject.NULL)
                 put("temp", s.tempC ?: JSONObject.NULL)
+                put("vac", s.vacuum)
                 put("cmt", s.comment)
             })
         }
@@ -290,6 +294,7 @@ object TaskTransfer {
                 if (rpm.isNotEmpty()) sb.append(" [").append(rpm).append("]")
                 s.durationMin?.let { sb.append(" · ").append(f(it, 0)).append(" мин") }
                 s.tempC?.let { sb.append(" · T° ").append(f(it, 0)).append(" °C") }
+                if (s.vacuum) sb.append(" · вакуум")
                 sb.append("\n")
                 if (s.comment.isNotBlank()) sb.append("     → ").append(s.comment).append("\n")
             }
@@ -357,7 +362,8 @@ object TaskTransfer {
                 sb.append("step;").append(q(e.title)).append(";").append(q(e.dateLabel())).append(";")
                   .append(q("${i + 1}. ${s.action}")).append(";")
                   .append(q((s.durationMin?.let { "${f(it, 0)} min" } ?: "") + " " + rpm))
-                  .append(";min/rpm;").append(q(s.tool.label + " | " + s.comment)).append("\n")
+                  .append(";min/rpm;")
+                  .append(q(s.tool.label + (if (s.vacuum) " | вакуум" else "") + " | " + s.comment)).append("\n")
             }
             listOf(
                 Triple("result", "viscosity mPas", e.resultViscosityMPas?.let { f(it) }),

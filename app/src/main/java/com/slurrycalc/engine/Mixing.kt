@@ -39,6 +39,8 @@ data class MixingStep(
     val durationMin: Double? = null,
     /** температура суспензии на этапе, °C (замер или ограничение) */
     val tempC: Double? = null,
+    /** ведётся ли этап под вакуумом (дегазация / работа в вакууме) */
+    val vacuum: Boolean = false,
     /** комментарий по выполняемым действиям (что и как вносим, контроль готовности) */
     val comment: String = "",
 ) {
@@ -212,7 +214,7 @@ object MixingSequences {
                 MixingStep(
                     action = "Растворение связующего (PVDF)",
                     tool = MixToolType.MAGNETIC, disperserRpm = null, bladeRpm = 400,
-                    durationMin = 60.0, tempC = 45.0,
+                    durationMin = 60.0, tempC = 45.0, vacuum = false,
                     comment = "PVDF тонкой струйкой в часть NMP; полный раствор (без «рыбьих глаз»), затем охладить до RT.",
                 ),
             )
@@ -222,7 +224,7 @@ object MixingSequences {
                 MixingStep(
                     action = "Предгидратация CMC",
                     tool = MixToolType.MAGNETIC, bladeRpm = 500,
-                    durationMin = 30.0, tempC = 60.0,
+                    durationMin = 30.0, tempC = 60.0, vacuum = false,
                     comment = "CMC в горячую деионизованную воду, без комков; охладить перед использованием.",
                 ),
             )
@@ -248,7 +250,7 @@ object MixingSequences {
             MixingStep(
                 action = "Дегазация",
                 tool = MixToolType.VACUUM, bladeRpm = 200,
-                durationMin = 10.0, tempC = null,
+                durationMin = 10.0, tempC = null, vacuum = true,
                 comment = "Вакуум при медленном помешивании до прекращения пузырения.",
             ),
         )
