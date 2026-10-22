@@ -103,7 +103,12 @@ data class AuditRow(
     val actor: String,                  // имя пользователя + роль; system — служебные события
     val action: String,                 // LOGIN, LOGOUT, BATCH_CREATE, BATCH_UPDATE, MATERIAL_ADD, USER_ADD, DENIED ...
     val details: String,
+    val prevHash: String = "",          // B1: хэш предыдущей записи (цепочка целостности); genesis = GENESIS
+    val rowHash: String = "",           // B1: хэш этой записи
 )
+
+/** Значение prevHash для первой записи цепочки */
+const val AUDIT_GENESIS = "GENESIS"
 
 /** Пользователь с PIN (этап 1f). Хэш PBKDF2+соль, см. calc.PinHash */
 @Entity(tableName = "users", indices = [Index("name")])
@@ -205,6 +210,14 @@ interface AuditDao {
     @Query("SELECT * FROM audit_log ORDER BY ts DESC LIMIT :limit")
     fun recent(limit: Int): List<AuditRow>
 
+    /** B1: вся цепочка в хронологическом порядке (для verifyChain) */
+    @Query("SELECT * FROM audit_log ORDER BY id ASC")
+    fun allOrdered(): List<AuditRow>
+
+    /** B1: последняя записи цепочки (её rowHash = prevHash для новой) */
+    @Query("SELECT * FROM audit_log ORDER BY id DESC LIMIT 1")
+    fun last(): AuditRow?
+
     @Query("SELECT COUNT(*) FROM audit_log")
     fun count(): Int
 }
@@ -239,6 +252,9 @@ interface MetaDao {
     @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
     fun put(row: MetaRow)
 
+    /** Утилита для ключ-значений (PIN-recovery и пр.) */
+    fun put(key: String, value: String) = put(MetaRow(key, value))
+
     @Query("DELETE FROM meta WHERE key = :key")
     fun deleteKey(key: String): Int
 }
@@ -254,6 +270,17 @@ interface MetaDao {
 // ВАЖНО: миграция v2→v3 регистрируется только через Builder.addMigrations(V2ToV3).
 // Аннотация @Migration (из androidx.room — она для Room Multiplatform KSP) здесь НЕ применима:
 // в Android-Room она не обрабатывается и ломала KSP ([MissingType] 'V2ToV3').
+/** B1: цепочка хэшей аудита. Схема v4 изменена НА МЕСТЕ (APK со схемой v3 на
+ * устройствах не устанавливался), поэтому для чистых установок и для локальных
+ * БД v2 применяется эта миграция. */
+val V2ToV4 = object : Migration(2, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        V2ToV3.migrate(db)
+        db.execSQL("ALTER TABLE `audit_log` ADD COLUMN `prevHash` TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE `audit_log` ADD COLUMN `rowHash` TEXT NOT NULL DEFAULT ''")
+    }
+}
+
 val V2ToV3 = object : Migration(2, 3) {
     override fun migrate(db: SupportSQLiteDatabase) {
         // users — новая таблица (этап 1f)
@@ -273,7 +300,7 @@ val V2ToV3 = object : Migration(2, 3) {
 
 @Database(
     entities = [JournalRow::class, MaterialRow::class, RegimeRow::class, AuditRow::class, MetaRow::class, UserRow::class],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -295,9 +322,11 @@ abstract class AppDatabase : RoomDatabase() {
                 instance ?: build(context.applicationContext, DB_NAME).also { instance = it }
             }
 
+        /** Тестовый конструктор: с зарегистрированными миграциями (B2 — тест v2→v4) */
         fun openForTest(context: Context, file: java.io.File): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, file.absolutePath)
                 .allowMainThreadQueries()
+                .addMigrations(V2ToV3, V2ToV4)
                 .build()
 
         internal fun build(appContext: Context, name: String): AppDatabase {
@@ -309,7 +338,7 @@ abstract class AppDatabase : RoomDatabase() {
                 // этап 1f: миграции v2→v3 явные; destructive — только как последний страховочный
                 // вариант для несовместимых будущих схем (данные журнала при этом теряются,
                 // поэтому до 1f включали fallback — оставляем, но добавляем addMigrations).
-                .addMigrations(V2ToV3)
+                .addMigrations(V2ToV3, V2ToV4)
                 .fallbackToDestructiveMigration()
                 .build()
         }

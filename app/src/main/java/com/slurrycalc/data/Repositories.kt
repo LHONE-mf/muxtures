@@ -40,6 +40,13 @@ class JournalRepository(private val db: AppDatabase) {
      * Возвращает false, если право отсутствует (отказ уже записан в аудит).
      */
     fun update(e: JournalEntry, actor: AuthRepository.User? = null, reason: String = ""): Boolean {
+        // A4 (SPEC раздел 10 шаг A.6): причина изменения обязательна — замена физическому
+        // запрету правок. Пустая/пробельная причина = отказ, событие пишется в аудит.
+        if (reason.isBlank()) {
+            Audit.record(db, actor?.let { "${it.name} (${it.role.label})" } ?: "система",
+                "UPDATE_DENIED", "id=${e.id}: попытка изменения без указания причины")
+            return false
+        }
         val old = db.journalDao().byId(e.id)
         val verdictChanged = old != null && old.verdict != e.verdict
         val cap = if (verdictChanged) Capability.SIGN_OFF else Capability.EDIT_ACTUALS
