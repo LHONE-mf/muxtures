@@ -1,4 +1,4 @@
-package com.slurrycalc.engine
+package com.slurrycalc.domain
 
 import android.content.Context
 import org.json.JSONArray

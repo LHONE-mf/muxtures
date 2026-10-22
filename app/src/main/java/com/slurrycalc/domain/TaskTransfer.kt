@@ -1,4 +1,4 @@
-package com.slurrycalc.engine
+package com.slurrycalc.domain
 
 import org.json.JSONArray
 import org.json.JSONObject

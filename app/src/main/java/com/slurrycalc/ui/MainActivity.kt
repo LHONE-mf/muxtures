@@ -72,19 +72,19 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.slurrycalc.engine.BatchMath
-import com.slurrycalc.engine.BuiltinRegimes
-import com.slurrycalc.engine.JournalEntry
-import com.slurrycalc.engine.MaterialEntry
-import com.slurrycalc.engine.MaterialRole
-import com.slurrycalc.engine.MixToolType
-import com.slurrycalc.engine.MixingStep
-import com.slurrycalc.engine.SolidComponent
-import com.slurrycalc.engine.Solvent
-import com.slurrycalc.engine.Solvents
-import com.slurrycalc.engine.TaskQr
-import com.slurrycalc.engine.TaskTransfer
-import com.slurrycalc.engine.ViscosityModel
+import com.slurrycalc.domain.BatchMath
+import com.slurrycalc.domain.BuiltinRegimes
+import com.slurrycalc.domain.JournalEntry
+import com.slurrycalc.domain.MaterialEntry
+import com.slurrycalc.domain.MaterialRole
+import com.slurrycalc.domain.MixToolType
+import com.slurrycalc.domain.MixingStep
+import com.slurrycalc.domain.SolidComponent
+import com.slurrycalc.domain.Solvent
+import com.slurrycalc.domain.Solvents
+import com.slurrycalc.ui.TaskQr
+import com.slurrycalc.domain.TaskTransfer
+import com.slurrycalc.domain.ViscosityModel
 import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
@@ -1388,7 +1388,7 @@ private fun JournalStepsEditor(vm: SlurryViewModel, e: JournalEntry, stepsDirty:
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             TextButton(onClick = {
                 val cathode = e.plannedSolventName.contains("NMP", true)
-                com.slurrycalc.engine.MixingSequences.template(cathode, e.plannedSolventName)
+                com.slurrycalc.domain.MixingSequences.template(cathode, e.plannedSolventName)
                     .forEach { localSteps.add(it.copy(id = System.nanoTime())) }
                 dirty = true
             }) { Text("шаблон") }

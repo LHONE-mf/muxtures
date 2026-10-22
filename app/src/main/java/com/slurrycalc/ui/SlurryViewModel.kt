@@ -9,23 +9,23 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
-import com.slurrycalc.engine.BatchMath
-import com.slurrycalc.engine.BuiltinRegimes
-import com.slurrycalc.engine.JournalEntry
-import com.slurrycalc.engine.JournalStore
-import com.slurrycalc.engine.MaterialEntry
-import com.slurrycalc.engine.MaterialRole
-import com.slurrycalc.engine.MaterialsDb
-import com.slurrycalc.engine.MixToolType
-import com.slurrycalc.engine.MixingSequences
-import com.slurrycalc.engine.MixingStep
-import com.slurrycalc.engine.RegimeStore
-import com.slurrycalc.engine.SlurryEngine
-import com.slurrycalc.engine.SlurryResult
-import com.slurrycalc.engine.Solvent
-import com.slurrycalc.engine.SolidComponent
-import com.slurrycalc.engine.Solvents
-import com.slurrycalc.engine.ViscosityModel
+import com.slurrycalc.domain.BatchMath
+import com.slurrycalc.domain.BuiltinRegimes
+import com.slurrycalc.domain.JournalEntry
+import com.slurrycalc.domain.JournalStore
+import com.slurrycalc.domain.MaterialEntry
+import com.slurrycalc.domain.MaterialRole
+import com.slurrycalc.domain.MaterialsDb
+import com.slurrycalc.domain.MixToolType
+import com.slurrycalc.domain.MixingSequences
+import com.slurrycalc.domain.MixingStep
+import com.slurrycalc.domain.RegimeStore
+import com.slurrycalc.domain.SlurryEngine
+import com.slurrycalc.domain.SlurryResult
+import com.slurrycalc.domain.Solvent
+import com.slurrycalc.domain.SolidComponent
+import com.slurrycalc.domain.Solvents
+import com.slurrycalc.domain.ViscosityModel
 import kotlin.math.abs
 
 /** Внешность приложения: тема и размер шрифта (настройки пользователя) */
@@ -139,8 +139,8 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadPreset(cathode: Boolean, activeName: String = "NMC 622", activeDensity: Double = 4.67) {
         solids.clear()
-        val list = if (cathode) com.slurrycalc.engine.Materials.typicalCathode(activeName, activeDensity)
-                   else com.slurrycalc.engine.Materials.typicalAnode()
+        val list = if (cathode) com.slurrycalc.domain.Materials.typicalCathode(activeName, activeDensity)
+                   else com.slurrycalc.domain.Materials.typicalAnode()
         // подвязываем id из каталога, где совпадает имя
         solids.addAll(list.map { c ->
             val m = materialsDb.all().firstOrNull { it.name == c.name }
@@ -232,7 +232,7 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun recalculate() {
         error = ""
-        val input = com.slurrycalc.engine.SlurryInput(
+        val input = com.slurrycalc.domain.SlurryInput(
             solids = solids.toList(),
             solvent = Solvent(solventName, solventDensity, solventViscosity),
             dryContentMassFraction = dryContentPct / 100.0,
