@@ -1,0 +1,446 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "10c3a0c18a1e74017ec1b45f53e8d816",
+    "entities": [
+      {
+        "tableName": "journal",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `ts` INTEGER NOT NULL, `title` TEXT NOT NULL, `dryContentPct` REAL NOT NULL, `wet_mass_mg` INTEGER NOT NULL, `recipeSummary` TEXT NOT NULL, `componentsJson` TEXT NOT NULL, `solventName` TEXT NOT NULL, `solvent_density_kgm3` REAL NOT NULL, `solvent_planned_mg` INTEGER NOT NULL, `regimeId` TEXT NOT NULL, `mix_dur_min` REAL, `mixNotes` TEXT NOT NULL, `stepsJson` TEXT NOT NULL, `actual_masses_json` TEXT NOT NULL, `actual_solvent_mg` INTEGER, `visc_pas` REAL, `viscCond` TEXT NOT NULL, `tempC` REAL, `grindLevel` TEXT NOT NULL, `grind_um` REAL, `meas_density_kgm3` REAL, `comment` TEXT NOT NULL, `verdict` TEXT NOT NULL, `isTask` INTEGER NOT NULL, `stepStatusesJson` TEXT NOT NULL, `immutable` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ts",
+            "columnName": "ts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dryContentPct",
+            "columnName": "dryContentPct",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "wetMassMg",
+            "columnName": "wet_mass_mg",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recipeSummary",
+            "columnName": "recipeSummary",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "componentsJson",
+            "columnName": "componentsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "solventName",
+            "columnName": "solventName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "solventDensityKgm3",
+            "columnName": "solvent_density_kgm3",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "solventPlannedMg",
+            "columnName": "solvent_planned_mg",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "regimeId",
+            "columnName": "regimeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mixDurMin",
+            "columnName": "mix_dur_min",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "mixNotes",
+            "columnName": "mixNotes",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stepsJson",
+            "columnName": "stepsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "actualMassesJson",
+            "columnName": "actual_masses_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "actualSolventMg",
+            "columnName": "actual_solvent_mg",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "viscPas",
+            "columnName": "visc_pas",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "viscCond",
+            "columnName": "viscCond",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tempC",
+            "columnName": "tempC",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "grindLevel",
+            "columnName": "grindLevel",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "grindUm",
+            "columnName": "grind_um",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "measDensityKgm3",
+            "columnName": "meas_density_kgm3",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "comment",
+            "columnName": "comment",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "verdict",
+            "columnName": "verdict",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isTask",
+            "columnName": "isTask",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stepStatusesJson",
+            "columnName": "stepStatusesJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "immutable",
+            "columnName": "immutable",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "materials",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `name` TEXT NOT NULL, `role` TEXT NOT NULL, `density_kgm3` REAL NOT NULL, `tap_kgm3` REAL, `d50_um` REAL, `bet_m2g` REAL, `ph` REAL, `moisturePpm` INTEGER, `dryingTempC` REAL, `cap_mah_g` REAL, `cond_s_cm` REAL, `visc_pas` REAL, `note` TEXT NOT NULL, `custom` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "role",
+            "columnName": "role",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "densityKgm3",
+            "columnName": "density_kgm3",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tapDensityKgm3",
+            "columnName": "tap_kgm3",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "d50Um",
+            "columnName": "d50_um",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "betM2g",
+            "columnName": "bet_m2g",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "ph",
+            "columnName": "ph",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "moisturePpm",
+            "columnName": "moisturePpm",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "dryingTempC",
+            "columnName": "dryingTempC",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "capacityMahG",
+            "columnName": "cap_mah_g",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "conductivityScm",
+            "columnName": "cond_s_cm",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "viscosityPas",
+            "columnName": "visc_pas",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "custom",
+            "columnName": "custom",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_materials_name",
+            "unique": false,
+            "columnNames": [
+              "name"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_materials_name` ON `${TABLE_NAME}` (`name`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "regimes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `tool` TEXT NOT NULL, `dispr_rpm` INTEGER, `blade_rpm` INTEGER, `time_min` REAL, `temp_limit_c` REAL, `description` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tool",
+            "columnName": "tool",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "disperserRpmHint",
+            "columnName": "dispr_rpm",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "bladeRpmHint",
+            "columnName": "blade_rpm",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "timeMinHint",
+            "columnName": "time_min",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "tempLimitC",
+            "columnName": "temp_limit_c",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_regimes_name",
+            "unique": false,
+            "columnNames": [
+              "name"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_regimes_name` ON `${TABLE_NAME}` (`name`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "audit_log",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `ts` INTEGER NOT NULL, `actor` TEXT NOT NULL, `action` TEXT NOT NULL, `details` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ts",
+            "columnName": "ts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "actor",
+            "columnName": "actor",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "action",
+            "columnName": "action",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "details",
+            "columnName": "details",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "meta",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`key` TEXT NOT NULL, `value` TEXT NOT NULL, PRIMARY KEY(`key`))",
+        "fields": [
+          {
+            "fieldPath": "key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "value",
+            "columnName": "value",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "key"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '10c3a0c18a1e74017ec1b45f53e8d816')"
+    ]
+  }
+}

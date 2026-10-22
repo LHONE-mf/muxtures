@@ -184,6 +184,17 @@ interface MetaDao {
 
 // ============================ Database ============================
 
+/**
+ * ВАЖНО: аннотация @Database обязательна — именно она заставляет KSP-процессор
+ * Room сгенерировать класс AppDatabase_Impl. Без неё генерация молча не
+ * выполняется, и на устройстве при первом открытии БД падает с
+ * "Cannot find implementation ... AppDatabase_Impl does not exist".
+ */
+@Database(
+    entities = [JournalRow::class, MaterialRow::class, RegimeRow::class, AuditRow::class, MetaRow::class],
+    version = 2,
+    exportSchema = true,
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun journalDao(): JournalDao
     abstract fun materialDao(): MaterialDao
