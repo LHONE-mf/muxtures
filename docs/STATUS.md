@@ -9,7 +9,7 @@
 - ui/SlurryViewModel.kt: addUser/changePin/resetPin/deactivateUser, nullable-результаты репозиториев.
 - domain/Roles.kt, calc/PinHash.kt, data/AuthRepository.kt: роли+матрица прав, PBKDF2-PIN, блокировка 5 попыток/60 с (счётчик в таблице users БД).
 - data/RoomDb.kt: v3 + миграция V2ToV3 (таблица users, индексы); ИСПРАВЛЕНО: ошибочная аннотация @Migration на классе миграции ломала KSP ([MissingType]) и @Database «переехал» на неё — аннотация возвращена на AppDatabase, миграция переведена в val-объект и регистрируется через Builder.addMigrations(V2ToV3).
-- ui/AuthScreens.kt (LoginScreen/UserMenuSheet/AdminScreen/AuditScreen) — экраны шага C сохранены здесь как WIP (компилируются); интеграция в MainActivity — этап C.
+- ui/AuthScreens.kt (LoginScreen/UserMenuSheet/AdminScreen/AuditScreen) — экраны шага C: отдельный коммит 8aa2589 (WIP, компилируются, в MainActivity НЕ подключены); интеграция — этап C.
 - SectionCard/ChipFlow в MainActivity: private → internal (для повторного использования AuthScreens).
 
 ## Остаток этапа 1f (не выполнено)
