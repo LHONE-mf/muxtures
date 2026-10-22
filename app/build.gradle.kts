@@ -48,6 +48,12 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true   // B2: Robolectric для миграций Room
+    }
+
+    sourceSets {
+        // B2: тесты читают экспортированные схемы Room (2.json/4.json) с classpath
+        getByName("test").resources.srcDirs("$projectDir/schemas")
     }
 }
 
@@ -71,6 +77,12 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20231013")
+    // B2: тесты миграций Room без эмулятора
+    testImplementation("org.robolectric:robolectric:4.11.1")
+    // B2: SchemaBundle.create + FrameworkSQLite под Robolectric; jar — только в classpath тестов
+    testImplementation("org.robolectric:android-all-instrumented:11-robolectric-6757853-i4")
+    testImplementation("androidx.test:core:1.5.0")
+    testImplementation("androidx.room:room-testing:2.6.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.1")
     androidTestImplementation("androidx.room:room-testing:$roomVersion")

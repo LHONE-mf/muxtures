@@ -275,6 +275,7 @@ interface MetaDao {
  * БД v2 применяется эта миграция. */
 val V2ToV4 = object : Migration(2, 4) {
     override fun migrate(db: SupportSQLiteDatabase) {
+        // цепочка v2->v3->v4: сначала штатная миграция 2->3 (users + индексы), затем колонки хэшей
         V2ToV3.migrate(db)
         db.execSQL("ALTER TABLE `audit_log` ADD COLUMN `prevHash` TEXT NOT NULL DEFAULT ''")
         db.execSQL("ALTER TABLE `audit_log` ADD COLUMN `rowHash` TEXT NOT NULL DEFAULT ''")
@@ -326,8 +327,11 @@ abstract class AppDatabase : RoomDatabase() {
         fun openForTest(context: Context, file: java.io.File): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, file.absolutePath)
                 .allowMainThreadQueries()
-                .addMigrations(V2ToV3, V2ToV4)
+                .addMigrations(*allMigrations)
                 .build()
+
+        /** Все явные миграции — используется тестами миграций (B2) и продакшен-билдером */
+        val allMigrations: Array<Migration> = arrayOf(V2ToV3, V2ToV4)
 
         internal fun build(appContext: Context, name: String): AppDatabase {
             // allowMainThreadQueries — временная мера для синхронного UI-слоя; БД маленькая,
@@ -338,8 +342,11 @@ abstract class AppDatabase : RoomDatabase() {
                 // этап 1f: миграции v2→v3 явные; destructive — только как последний страховочный
                 // вариант для несовместимых будущих схем (данные журнала при этом теряются,
                 // поэтому до 1f включали fallback — оставляем, но добавляем addMigrations).
-                .addMigrations(V2ToV3, V2ToV4)
-                .fallbackToDestructiveMigration()
+                .addMigrations(*allMigrations)
+                // B0/B2: destructive-fallback убран полностью. Если на устройстве окажется
+                // схема, для которой нет миграции, Room бросит IllegalStateException — его
+                // ловит существующий обработчик старта (splash-экран с текстом ошибки и
+                // crash.log). Молчаливое пересоздание БД с потерью журнала невозможно.
                 .build()
         }
     }
