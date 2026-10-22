@@ -74,6 +74,25 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearPermissionMessage() { permissionMessage = null }
 
+    fun addUser(name: String, pin: String, role: UserRole): Result<AuthRepository.User> =
+        auth.addUser(name, pin, role).also { r ->
+            if (r.isSuccess && currentUser == null) {
+                // первый пользователь сразу становится текущим — иначе некому управлять
+                val u = r.getOrNull()
+                if (u != null) { currentUser = u; DataHolder.setCurrentUser(u) }
+            }
+        }
+
+    fun changePin(userId: Long, oldPin: String, newPin: String): Result<Unit> =
+        auth.changePin(userId, oldPin, newPin)
+
+    /** Сброс PIN пользователю администратором (панель управления) */
+    fun resetPin(adminId: Long, userId: Long, newPin: String): Result<Unit> =
+        auth.resetPinByAdmin(adminId, userId, newPin)
+
+    fun deactivateUser(adminId: Long, userId: Long): Result<Unit> =
+        auth.deactivateUser(adminId, userId)
+
     fun login(name: String, pin: String): AuthRepository.LoginResult {
         val res = auth.login(name, pin)
         if (res is AuthRepository.LoginResult.Success) {
@@ -253,22 +272,21 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    /** Добавить режим смешивания вручную во встроенный список пользовательских режимов */
+    /** Добавить режим смешивания вручную (право MANAGE_REGIMES проверяется в data-слое) */
     fun addCustomRegime(
         name: String, tool: MixToolType, dispr: Int?, blader: Int?,
         timeMin: Double?, tempLimit: Double?, description: String,
-    ) {
-        regimeStore.add(name, tool, dispr, blader, timeMin, tempLimit, description)
-    }
+    ): Boolean =
+        regimeStore.add(name, tool, dispr, blader, timeMin, tempLimit, description, currentUser) != null
 
-    fun saveStepAsRegime(step: MixingStep) {
+    fun saveStepAsRegime(step: MixingStep): Boolean {
         val name = step.action.ifBlank { "Режим ${regimeStore.customList().size + 1}" }
-        regimeStore.add(
+        return regimeStore.add(
             name = name, tool = step.tool,
             dispr = step.disperserRpm, blader = step.bladeRpm,
             timeMin = step.durationMin, tempLimit = step.tempC,
-            description = step.comment,
-        )
+            description = step.comment, actor = currentUser,
+        ) != null
     }
 
     fun recalculate() {
@@ -320,21 +338,21 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
             steps = steps.toList(),
         )
         if (!can(Capability.CREATE_BATCH)) return null
-        val saved = journalStore.add(e, currentUser)
+        val saved = journalStore.add(e, currentUser) ?: return null
         journal.add(0, saved)
         return saved.id
     }
 
     /**
-     * Обновить запись журнала (факт/результаты). Требует права EDIT_ACTUALS;
-     * смена вердикта (подпись ОТК) — дополнительная проверка SIGN_OFF.
-     * Возвращает false, если право отсутствует (причина — в permissionMessage).
+     * Обновить запись журнала (факт/результаты). Права EDIT_ACTUALS/SIGN_OFF проверяются
+     * в data-слое (Repositories.JournalRepository.update); при отказе причина — в permissionMessage.
      */
     fun updateJournalEntry(e: JournalEntry, reason: String = ""): Boolean {
+        // предварительная проверка для сообщения в UI; реальная защита — в data-слое
         val old = journal.firstOrNull { it.id == e.id }
         val verdictChanged = old != null && old.verdict != e.verdict
         if (!can(if (verdictChanged) Capability.SIGN_OFF else Capability.EDIT_ACTUALS)) return false
-        journalStore.update(e, currentUser, reason)
+        if (!journalStore.update(e, currentUser, reason)) return false
         val idx = journal.indexOfFirst { it.id == e.id }
         if (idx >= 0) journal[idx] = e
         return true
@@ -377,9 +395,11 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
     fun actualFor(e: JournalEntry): BatchMath.ActualBatch? = e.computeActual()
 
     /** Принять входящее задание: добавить запись (isTask=true) в начало журнала */
-    fun importTask(e: JournalEntry) {
-        val saved = journalStore.add(e.copy(id = 0, isTask = true))
+    fun importTask(e: JournalEntry): Boolean {
+        if (!can(Capability.CREATE_BATCH)) return false
+        val saved = journalStore.add(e.copy(id = 0, isTask = true), currentUser) ?: return false
         journal.add(0, saved)
+        return true
     }
 
     /** Отметить статус этапа i в записи журнала («выполнено»/«отклонение»/«пропущено», повторное нажатие снимает) */

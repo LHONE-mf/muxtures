@@ -94,7 +94,7 @@ class AuthRepository(private val db: AppDatabase) {
             ?: return Result.failure(IllegalStateException("Администратор не найден"))
         if (admin.role != UserRole.ADMIN.name) {
             Audit.record(db, "${admin.name} (${admin.role})", "DENIED", "попытка сброса PIN без роли администратора")
-            return Result.failure(SecurityException(RolePermissions.deniedReason(UserRole.ADMIN, Capability.MANAGE_USERS)))
+            return Result.failure(SecurityException(PermissionCheck.deniedReason(UserRole.ADMIN, Capability.MANAGE_USERS)))
         }
         val target = db.userDao().byId(userId) ?: return Result.failure(IllegalStateException("Пользователь не найден"))
         if (!PinHash.isValidPin(newPin)) return Result.failure(IllegalArgumentException("PIN: только цифры, длина 4–8"))
@@ -108,7 +108,7 @@ class AuthRepository(private val db: AppDatabase) {
         val admin = db.userDao().byId(adminId)
             ?: return Result.failure(IllegalStateException("Администратор не найден"))
         if (admin.role != UserRole.ADMIN.name) {
-            return Result.failure(SecurityException(RolePermissions.deniedReason(UserRole.ADMIN, Capability.MANAGE_USERS)))
+            return Result.failure(SecurityException(PermissionCheck.deniedReason(UserRole.ADMIN, Capability.MANAGE_USERS)))
         }
         val target = db.userDao().byId(userId) ?: return Result.failure(IllegalStateException("Пользователь не найден"))
         if (target.role == UserRole.ADMIN.name &&
@@ -177,7 +177,7 @@ object Guard {
     fun check(db: AppDatabase, user: AuthRepository.User?, cap: Capability): PermissionCheck {
         return if (RolePermissions.can(user?.role, cap)) PermissionCheck.OK
         else {
-            val reason = RolePermissions.deniedReason(user?.role, cap)
+            val reason = PermissionCheck.deniedReason(user?.role, cap)
             Audit.record(db, user?.let { "${it.name} (${it.role.label})" } ?: "гость", "DENIED", reason)
             PermissionCheck(false, reason)
         }

@@ -20,8 +20,9 @@ class JournalRepository(private val db: AppDatabase) {
 
     fun all(): List<JournalEntry> = db.journalDao().all().map(Mappers::fromRow)
 
-    /** добавить запись; id/ts проставляются здесь. Запись становится неизменяемой (1f). */
-    fun add(e: JournalEntry, actor: AuthRepository.User? = null): JournalEntry {
+    /** Добавить запись. Требует права CREATE_BATCH (этап 1f: проверка в data-слое). */
+    fun add(e: JournalEntry, actor: AuthRepository.User? = null): JournalEntry? {
+        Guard.check(db, actor, Capability.CREATE_BATCH).takeIf { !it.allowed }?.let { return null }
         val row = Mappers.toRow(e).copy(
             id = 0L,
             ts = if (e.timestampMs > 0) e.timestampMs else System.currentTimeMillis(),
@@ -35,10 +36,14 @@ class JournalRepository(private val db: AppDatabase) {
 
     /**
      * Обновление фактических данных/результатов РАЗРЕШЕНО (запись остаётся в журнале,
-     * изменения аудятся старое→новое). Подпись ОТК проверяется на уровне ViewModel.
+     * изменения аудятся старое→новое). Смена вердикта — подпись ОТК, требует SIGN_OFF.
+     * Возвращает false, если право отсутствует (отказ уже записан в аудит).
      */
-    fun update(e: JournalEntry, actor: AuthRepository.User? = null, reason: String = "") {
+    fun update(e: JournalEntry, actor: AuthRepository.User? = null, reason: String = ""): Boolean {
         val old = db.journalDao().byId(e.id)
+        val verdictChanged = old != null && old.verdict != e.verdict
+        val cap = if (verdictChanged) Capability.SIGN_OFF else Capability.EDIT_ACTUALS
+        if (!Guard.check(db, actor, cap).allowed) return false
         val newRow = Mappers.toRow(e).copy(immutable = true)
         db.journalDao().update(newRow)
         val diff = buildString {
@@ -53,6 +58,7 @@ class JournalRepository(private val db: AppDatabase) {
         }.ifEmpty { "обновление записи id=${e.id}" }
         Audit.record(db, actor?.let { "${it.name} (${it.role.label})" } ?: "система",
             "BATCH_UPDATE", "id=${e.id}: $diff")
+        return true
     }
 
     /**
@@ -90,7 +96,9 @@ class MaterialsRepository(private val db: AppDatabase) {
 
     fun add(name: String, role: MaterialRole, density: Double, extras: Map<String, Double?> = emptyMap(),
             moisturePpm: Int? = null, note: String = "",
-            actor: AuthRepository.User? = null): MaterialEntry {
+            actor: AuthRepository.User? = null): MaterialEntry? {
+        // этап 1f: право проверяется в data-слое (не только скрытием кнопок)
+        if (!Guard.check(db, actor, Capability.MANAGE_MATERIALS).allowed) return null
         val e = MaterialEntry(
             id = nextId++,
             name = name.trim().ifEmpty { "Материал" },
@@ -115,6 +123,7 @@ class MaterialsRepository(private val db: AppDatabase) {
     }
 
     fun remove(id: Long, actor: AuthRepository.User? = null): Boolean {
+        if (!Guard.check(db, actor, Capability.MANAGE_MATERIALS).allowed) return false
         val ok = db.materialDao().deleteCustom(id) > 0
         if (ok) Audit.record(db, actor?.let { "${it.name} (${it.role.label})" } ?: "система",
             "MATERIAL_DELETE", "id=$id")
@@ -134,7 +143,8 @@ class RegimeRepository(private val db: AppDatabase) {
 
     fun add(name: String, tool: MixToolType, dispr: Int?, blader: Int?, timeMin: Double?,
             tempLimit: Double?, description: String,
-            actor: AuthRepository.User? = null): CustomRegime {
+            actor: AuthRepository.User? = null): CustomRegime? {
+        if (!Guard.check(db, actor, Capability.MANAGE_REGIMES).allowed) return null
         val r = CustomRegime(
             id = "regime_${System.currentTimeMillis()}_${seq++}",
             name = name.trim().ifEmpty { "Мой режим" },
@@ -148,6 +158,7 @@ class RegimeRepository(private val db: AppDatabase) {
     }
 
     fun remove(id: String, actor: AuthRepository.User? = null): Boolean {
+        if (!Guard.check(db, actor, Capability.MANAGE_REGIMES).allowed) return false
         val ok = db.regimeDao().delete(id) > 0
         if (ok) Audit.record(db, actor?.let { "${it.name} (${it.role.label})" } ?: "система",
             "REGIME_DELETE", id)
@@ -232,6 +243,8 @@ object DataHolder {
     fun purgeLegacyPrefs(context: Context): MigrationEngine.PurgeReport? {
         val database = db ?: return null
         if (!wasMigrated(database)) return null
+        // этап 1f: удаление legacy-данных — только роль с правом PURGE_LEGACY (администратор)
+        if (!Guard.check(database, currentUser, Capability.PURGE_LEGACY).allowed) return null
         val report = MigrationEngine.purgeLegacyPrefs(context)
         try {
             database.metaDao().put(

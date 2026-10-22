@@ -6,7 +6,7 @@ import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Index
-import androidx.room.Migration
+import androidx.room.migration.Migration
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
@@ -251,13 +251,10 @@ interface MetaDao {
  * выполняется, и на устройстве при первом открытии БД падает с
  * "Cannot find implementation ... AppDatabase_Impl does not exist".
  */
-@Database(
-    entities = [JournalRow::class, MaterialRow::class, RegimeRow::class, AuditRow::class, MetaRow::class, UserRow::class],
-    version = 3,
-    exportSchema = true,
-)
-@Migration(startVersion = 2, endVersion = 3)
-class V2ToV3 : Migration(2, 3) {
+// ВАЖНО: миграция v2→v3 регистрируется только через Builder.addMigrations(V2ToV3).
+// Аннотация @Migration (из androidx.room — она для Room Multiplatform KSP) здесь НЕ применима:
+// в Android-Room она не обрабатывается и ломала KSP ([MissingType] 'V2ToV3').
+val V2ToV3 = object : Migration(2, 3) {
     override fun migrate(db: SupportSQLiteDatabase) {
         // users — новая таблица (этап 1f)
         db.execSQL(
@@ -267,13 +264,18 @@ class V2ToV3 : Migration(2, 3) {
                 "`lockedUntil` INTEGER, `active` INTEGER NOT NULL)"
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_users_name` ON `users` (`name`)")
-        // audit_log — индекс по ts и уточнённые колонки (таблица уже существует из v2)
+        // audit_log — индекс по ts (таблица уже существует из v2; колонки совпадают)
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_audit_log_ts` ON `audit_log` (`ts`)")
         // journal.immutable уже есть в v2; на всякий случай приводим к значению по умолчанию
         db.execSQL("UPDATE journal SET immutable = 1 WHERE immutable IS NULL")
     }
 }
 
+@Database(
+    entities = [JournalRow::class, MaterialRow::class, RegimeRow::class, AuditRow::class, MetaRow::class, UserRow::class],
+    version = 3,
+    exportSchema = true,
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun journalDao(): JournalDao
     abstract fun materialDao(): MaterialDao
@@ -307,7 +309,7 @@ abstract class AppDatabase : RoomDatabase() {
                 // этап 1f: миграции v2→v3 явные; destructive — только как последний страховочный
                 // вариант для несовместимых будущих схем (данные журнала при этом теряются,
                 // поэтому до 1f включали fallback — оставляем, но добавляем addMigrations).
-                .addMigrations(V2ToV3())
+                .addMigrations(V2ToV3)
                 .fallbackToDestructiveMigration()
                 .build()
         }
