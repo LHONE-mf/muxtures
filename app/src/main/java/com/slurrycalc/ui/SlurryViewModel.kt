@@ -9,7 +9,12 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import com.slurrycalc.data.AuthRepository
+import com.slurrycalc.data.AuditRow
 import com.slurrycalc.data.DataHolder
+import com.slurrycalc.domain.Capability
+import com.slurrycalc.domain.PermissionCheck
+import com.slurrycalc.domain.UserRole
 import com.slurrycalc.domain.BatchMath
 import com.slurrycalc.domain.BuiltinRegimes
 import com.slurrycalc.domain.JournalEntry
@@ -52,6 +57,39 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
     val journalStore get() = DataHolder.journal
     val regimeStore get() = DataHolder.regimes
     val settings = Settings(app)
+
+    // ---------- этап 1f: пользователи / роли / аудит ----------
+    val auth get() = DataHolder.auth
+    var currentUser by mutableStateOf<AuthRepository.User?>(DataHolder.currentUser)
+        private set
+    /** сообщение об отказе права (показывается в UI и исчезает после действия) */
+    var permissionMessage by mutableStateOf<String?>(null)
+        private set
+
+    fun can(cap: Capability): Boolean {
+        val check = DataHolder.guard(cap)
+        if (!check.allowed) permissionMessage = check.reason
+        return check.allowed
+    }
+
+    fun clearPermissionMessage() { permissionMessage = null }
+
+    fun login(name: String, pin: String): AuthRepository.LoginResult {
+        val res = auth.login(name, pin)
+        if (res is AuthRepository.LoginResult.Success) {
+            currentUser = res.user
+            DataHolder.setCurrentUser(res.user)
+        }
+        return res
+    }
+
+    fun logout() {
+        currentUser?.let { auth.logout(it) }
+        currentUser = null
+        DataHolder.setCurrentUser(null)
+    }
+
+    fun auditLog(limit: Int = 200): List<AuditRow> = DataHolder.auditRecent(limit)
 
     // ---------- состав ----------
     val solids = mutableStateListOf<SolidComponent>()
@@ -281,21 +319,35 @@ class SlurryViewModel(app: Application) : AndroidViewModel(app) {
             mixingNotes = "",
             steps = steps.toList(),
         )
-        val saved = journalStore.add(e)
+        if (!can(Capability.CREATE_BATCH)) return null
+        val saved = journalStore.add(e, currentUser)
         journal.add(0, saved)
         return saved.id
     }
 
-    /** Обновить запись журнала (факт/результаты). */
-    fun updateJournalEntry(e: JournalEntry) {
-        journalStore.update(e)
+    /**
+     * Обновить запись журнала (факт/результаты). Требует права EDIT_ACTUALS;
+     * смена вердикта (подпись ОТК) — дополнительная проверка SIGN_OFF.
+     * Возвращает false, если право отсутствует (причина — в permissionMessage).
+     */
+    fun updateJournalEntry(e: JournalEntry, reason: String = ""): Boolean {
+        val old = journal.firstOrNull { it.id == e.id }
+        val verdictChanged = old != null && old.verdict != e.verdict
+        if (!can(if (verdictChanged) Capability.SIGN_OFF else Capability.EDIT_ACTUALS)) return false
+        journalStore.update(e, currentUser, reason)
         val idx = journal.indexOfFirst { it.id == e.id }
         if (idx >= 0) journal[idx] = e
+        return true
     }
 
-    fun deleteJournalEntry(id: Long) {
-        journalStore.remove(id)
-        journal.removeAll { it.id == id }
+    /**
+     * Этап 1f: удаление записей журнала запрещено (SPEC п.1.6 «ничего не удаляется
+     * физически»). Метод всегда возвращает false; исправление — новая запись с причиной.
+     */
+    fun deleteJournalEntry(id: Long): Boolean {
+        permissionMessage = "Журнал неизменяем: записи не удаляются. Исправление — новая запись с причиной."
+        DataHolder.audit("DELETE_BLOCKED", "UI-попытка удаления id=$id")
+        return false
     }
 
     /** загрузить план из журнала обратно в калькулятор */

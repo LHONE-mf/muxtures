@@ -58,6 +58,8 @@ object Mappers {
         verdict = e.verdict,
         isTask = e.isTask,
         stepStatusesJson = JSONArray().apply { e.stepStatuses.forEach { put(it) } }.toString(),
+        // этап 1f: любая запись, попавшая в журнал, неизменяема (удаление запрещено)
+        immutable = true,
     )
 
     fun fromRow(r: JournalRow): JournalEntry {

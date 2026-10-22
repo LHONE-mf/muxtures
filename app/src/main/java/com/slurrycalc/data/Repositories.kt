@@ -5,7 +5,9 @@ import com.slurrycalc.domain.CustomRegime
 import com.slurrycalc.domain.JournalEntry
 import com.slurrycalc.domain.MaterialEntry
 import com.slurrycalc.domain.MaterialRole
+import com.slurrycalc.domain.Capability
 import com.slurrycalc.domain.MixToolType
+import com.slurrycalc.domain.RolePermissions
 
 /**
  * Репозитории поверх Room. API намеренно совпадает со старыми SharedPreferences-хранилищами
@@ -18,25 +20,54 @@ class JournalRepository(private val db: AppDatabase) {
 
     fun all(): List<JournalEntry> = db.journalDao().all().map(Mappers::fromRow)
 
-    /** добавить запись; id/ts проставляются здесь */
-    fun add(e: JournalEntry): JournalEntry {
+    /** добавить запись; id/ts проставляются здесь. Запись становится неизменяемой (1f). */
+    fun add(e: JournalEntry, actor: AuthRepository.User? = null): JournalEntry {
         val row = Mappers.toRow(e).copy(
             id = 0L,
             ts = if (e.timestampMs > 0) e.timestampMs else System.currentTimeMillis(),
+            immutable = true,   // этап 1f: записи журнала не удаляются
         )
         val id = db.journalDao().insert(row)
+        Audit.record(db, actor?.let { "${it.name} (${it.role.label})" } ?: "система",
+            "BATCH_CREATE", "замес «${e.title}», id=$id")
         return e.copy(id = id, timestampMs = row.ts)
     }
 
-    fun update(e: JournalEntry) = db.journalDao().update(Mappers.toRow(e))
+    /**
+     * Обновление фактических данных/результатов РАЗРЕШЕНО (запись остаётся в журнале,
+     * изменения аудятся старое→новое). Подпись ОТК проверяется на уровне ViewModel.
+     */
+    fun update(e: JournalEntry, actor: AuthRepository.User? = null, reason: String = "") {
+        val old = db.journalDao().byId(e.id)
+        val newRow = Mappers.toRow(e).copy(immutable = true)
+        db.journalDao().update(newRow)
+        val diff = buildString {
+            if (old != null) {
+                if (old.verdict != newRow.verdict) append("вердикт: ${old.verdict} → ${newRow.verdict}; ")
+                if (old.actualMassesJson != newRow.actualMassesJson) append("факт.массы изменены; ")
+                if (old.viscPas != newRow.viscPas) append("вязкость изменена; ")
+                if (old.measDensityKgm3 != newRow.measDensityKgm3) append("плотность измерена/изменена; ")
+                if (old.comment != newRow.comment) append("комментарий изменён; ")
+            }
+            if (reason.isNotBlank()) append("причина: $reason")
+        }.ifEmpty { "обновление записи id=${e.id}" }
+        Audit.record(db, actor?.let { "${it.name} (${it.role.label})" } ?: "система",
+            "BATCH_UPDATE", "id=${e.id}: $diff")
+    }
 
     /**
-     * Удаление записи журнала. До этапа 1f доступно всем; флаг immutable уже пишется
-     * (миграция помечает импортированные записи) — правила запрета подключим в 1f.
+     * Этап 1f: физическое удаление записей журнала ЗАПРЕЩЕНО (SPEC п.1.6).
+     * Метод сохранён для совместимости API, всегда возвращает false и пишет событие.
+     * Исправление ошибки — новая запись с причиной.
      */
-    fun remove(id: Long): Boolean = db.journalDao().deleteById(id) > 0
+    fun remove(id: Long, actor: AuthRepository.User? = null): Boolean {
+        Audit.record(db, actor?.let { "${it.name} (${it.role.label})" } ?: "система",
+            "DELETE_BLOCKED", "попытка удаления записи id=$id — журнал неизменяем")
+        return false
+    }
 
     fun byId(id: Long): JournalEntry? = db.journalDao().byId(id)?.let(Mappers::fromRow)
+    fun isImmutable(id: Long): Boolean = db.journalDao().isImmutable(id) > 0
 }
 
 class MaterialsRepository(private val db: AppDatabase) {
@@ -58,7 +89,8 @@ class MaterialsRepository(private val db: AppDatabase) {
         all().filter { it.role == role }.sortedBy { it.name.lowercase() }
 
     fun add(name: String, role: MaterialRole, density: Double, extras: Map<String, Double?> = emptyMap(),
-            moisturePpm: Int? = null, note: String = ""): MaterialEntry {
+            moisturePpm: Int? = null, note: String = "",
+            actor: AuthRepository.User? = null): MaterialEntry {
         val e = MaterialEntry(
             id = nextId++,
             name = name.trim().ifEmpty { "Материал" },
@@ -77,10 +109,17 @@ class MaterialsRepository(private val db: AppDatabase) {
             custom = true,
         )
         db.materialDao().insert(Mappers.toRow(e))
+        Audit.record(db, actor?.let { "${it.name} (${it.role.label})" } ?: "система",
+            "MATERIAL_ADD", "${e.name}, ${e.role}, ρ=${e.density}")
         return e
     }
 
-    fun remove(id: Long): Boolean = db.materialDao().deleteCustom(id) > 0
+    fun remove(id: Long, actor: AuthRepository.User? = null): Boolean {
+        val ok = db.materialDao().deleteCustom(id) > 0
+        if (ok) Audit.record(db, actor?.let { "${it.name} (${it.role.label})" } ?: "система",
+            "MATERIAL_DELETE", "id=$id")
+        return ok
+    }
 }
 
 class RegimeRepository(private val db: AppDatabase) {
@@ -94,7 +133,8 @@ class RegimeRepository(private val db: AppDatabase) {
         customList().map { it.name } + com.slurrycalc.domain.BuiltinRegimes.ALL.values.map { it.name }
 
     fun add(name: String, tool: MixToolType, dispr: Int?, blader: Int?, timeMin: Double?,
-            tempLimit: Double?, description: String): CustomRegime {
+            tempLimit: Double?, description: String,
+            actor: AuthRepository.User? = null): CustomRegime {
         val r = CustomRegime(
             id = "regime_${System.currentTimeMillis()}_${seq++}",
             name = name.trim().ifEmpty { "Мой режим" },
@@ -102,10 +142,17 @@ class RegimeRepository(private val db: AppDatabase) {
             timeMinHint = timeMin, tempLimitC = tempLimit, description = description.trim(),
         )
         db.regimeDao().insert(Mappers.toRow(r))
+        Audit.record(db, actor?.let { "${it.name} (${it.role.label})" } ?: "система",
+            "REGIME_ADD", r.name)
         return r
     }
 
-    fun remove(id: String): Boolean = db.regimeDao().delete(id) > 0
+    fun remove(id: String, actor: AuthRepository.User? = null): Boolean {
+        val ok = db.regimeDao().delete(id) > 0
+        if (ok) Audit.record(db, actor?.let { "${it.name} (${it.role.label})" } ?: "система",
+            "REGIME_DELETE", id)
+        return ok
+    }
 
     fun byName(name: String): CustomRegime? = customList().firstOrNull { it.name == name }
 }
@@ -127,6 +174,31 @@ object DataHolder {
         private set
     lateinit var regimes: RegimeRepository
         private set
+    lateinit var auth: AuthRepository
+        private set
+
+    /** последняя вошедшая в приложение учётная запись (null — выбор пользователя не сделан) */
+    @Volatile
+    var currentUser: AuthRepository.User? = null
+        private set
+
+    fun setCurrentUser(user: AuthRepository.User?) { currentUser = user }
+
+    /** Проверка права текущей роли; при отказе — событие DENIED в аудите */
+    fun guard(cap: Capability): com.slurrycalc.domain.PermissionCheck {
+        val database = db
+        return if (database == null) com.slurrycalc.domain.PermissionCheck(false, "БД не готова")
+        else Guard.check(database, currentUser, cap)
+    }
+
+    /** Запись события аудита от имени текущего пользователя */
+    fun audit(action: String, details: String) {
+        val database = db ?: return
+        Audit.record(database, currentUser?.let { "${it.name} (${it.role.label})" } ?: "система", action, details)
+    }
+
+    fun auditRecent(limit: Int = 200): List<AuditRow> =
+        db?.let { Audit.recent(it, limit) } ?: emptyList()
 
     /** результат последней миграции (для отладки/экрана «О программе») */
     var lastMigrationReport: MigrationEngine.Report? = null
@@ -147,6 +219,8 @@ object DataHolder {
             journal = JournalRepository(database)
             materials = MaterialsRepository(database)
             regimes = RegimeRepository(database)
+            auth = AuthRepository(database)
+            Audit.record(database, "system", "APP_START", "приложение запущено, БД v${database.openHelper.readableDatabase.version}")
         }
     }
 
@@ -175,5 +249,6 @@ object DataHolder {
         journal = JournalRepository(database)
         materials = MaterialsRepository(database)
         regimes = RegimeRepository(database)
+        auth = AuthRepository(database)
     }
 }

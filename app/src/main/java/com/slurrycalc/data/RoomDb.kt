@@ -6,10 +6,12 @@ import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Index
+import androidx.room.Migration
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
  * Room-база (этап 1e, SPEC п.0.5 «правило единиц»):
@@ -93,14 +95,28 @@ data class RegimeRow(
     val description: String,
 )
 
-/** Событие аудита (таблица заполняется на этапе 1f) */
-@Entity(tableName = "audit_log")
+/** Событие аудита (этап 1f). Append-only: DELETE/UPDATE в DAO отсутствуют намеренно. */
+@Entity(tableName = "audit_log", indices = [Index("ts")])
 data class AuditRow(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     val ts: Long,
-    val actor: String,                  // роль: master / batcher / system
-    val action: String,                 // LOGIN, BATCH_CREATE, BATCH_UPDATE, MIGRATION ...
+    val actor: String,                  // имя пользователя + роль; system — служебные события
+    val action: String,                 // LOGIN, LOGOUT, BATCH_CREATE, BATCH_UPDATE, MATERIAL_ADD, USER_ADD, DENIED ...
     val details: String,
+)
+
+/** Пользователь с PIN (этап 1f). Хэш PBKDF2+соль, см. calc.PinHash */
+@Entity(tableName = "users", indices = [Index("name")])
+data class UserRow(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0L,
+    val name: String,
+    val role: String,                   // имя UserRole
+    val pinHash: String,                // "pbkdf2$iter$salt$hash"
+    val createdAt: Long,
+    val lastLoginAt: Long? = null,
+    val failedAttempts: Int = 0,        // защита от перебора PIN
+    val lockedUntil: Long? = null,      // мс эпохи; до этого момента вход запрещён
+    val active: Boolean = true,         // деактивированный профиль не удаляется (аудит!)
 )
 
 /** Служебный флаг: миграция выполнена */
@@ -136,8 +152,21 @@ interface JournalDao {
     @androidx.room.Update
     fun update(row: JournalRow)
 
-    @Query("DELETE FROM journal WHERE id = :id")
-    fun deleteById(id: Long): Int
+    /**
+     * Физическое удаление записей журнала ЗАПРЕЩЕНО (SPEC п.1.6, этап 1f).
+     * Разрешено только удаление mutable-черновиков (immutable = 0), созданных
+     * текущей сессией расчёта. Импортированные и подписанные записи не удаляются:
+     * исправление = новая запись с причиной.
+     */
+    @Query("DELETE FROM journal WHERE id = :id AND immutable = 0")
+    fun deleteMutableById(id: Long): Int
+
+    /** Пометить запись неизменяемой (при сохранении замеса/задания) */
+    @Query("UPDATE journal SET immutable = 1 WHERE id = :id")
+    fun markImmutable(id: Long): Int
+
+    @Query("SELECT COUNT(*) FROM journal WHERE id = :id AND immutable = 1")
+    fun isImmutable(id: Long): Int
 }
 
 @Dao
@@ -164,13 +193,42 @@ interface RegimeDao {
     fun delete(id: String): Int
 }
 
+/**
+ * DAO аудита. ПРИНЦИПИАЛЬНО append-only: нет @Update/@Delete —
+ * удалить или подправить событие невозможно даже из кода приложения (этап 1f).
+ */
 @Dao
 interface AuditDao {
     @androidx.room.Insert
-    fun insert(row: AuditRow)
+    fun insert(row: AuditRow): Long
 
     @Query("SELECT * FROM audit_log ORDER BY ts DESC LIMIT :limit")
     fun recent(limit: Int): List<AuditRow>
+
+    @Query("SELECT COUNT(*) FROM audit_log")
+    fun count(): Int
+}
+
+/** Пользователи (этап 1f) */
+@Dao
+interface UserDao {
+    @Query("SELECT * FROM users WHERE active = 1 ORDER BY name COLLATE NOCASE")
+    fun activeAll(): List<UserRow>
+
+    @Query("SELECT * FROM users ORDER BY name COLLATE NOCASE")
+    fun all(): List<UserRow>
+
+    @Query("SELECT * FROM users WHERE id = :id")
+    fun byId(id: Long): UserRow?
+
+    @Query("SELECT COUNT(*) FROM users")
+    fun count(): Int
+
+    @androidx.room.Insert
+    fun insert(row: UserRow): Long
+
+    @androidx.room.Update
+    fun update(row: UserRow)
 }
 
 @Dao
@@ -194,15 +252,34 @@ interface MetaDao {
  * "Cannot find implementation ... AppDatabase_Impl does not exist".
  */
 @Database(
-    entities = [JournalRow::class, MaterialRow::class, RegimeRow::class, AuditRow::class, MetaRow::class],
-    version = 2,
+    entities = [JournalRow::class, MaterialRow::class, RegimeRow::class, AuditRow::class, MetaRow::class, UserRow::class],
+    version = 3,
     exportSchema = true,
 )
+@Migration(startVersion = 2, endVersion = 3)
+class V2ToV3 : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // users — новая таблица (этап 1f)
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `users` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`name` TEXT NOT NULL, `role` TEXT NOT NULL, `pinHash` TEXT NOT NULL, " +
+                "`createdAt` INTEGER NOT NULL, `lastLoginAt` INTEGER, `failedAttempts` INTEGER NOT NULL, " +
+                "`lockedUntil` INTEGER, `active` INTEGER NOT NULL)"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_users_name` ON `users` (`name`)")
+        // audit_log — индекс по ts и уточнённые колонки (таблица уже существует из v2)
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_audit_log_ts` ON `audit_log` (`ts`)")
+        // journal.immutable уже есть в v2; на всякий случай приводим к значению по умолчанию
+        db.execSQL("UPDATE journal SET immutable = 1 WHERE immutable IS NULL")
+    }
+}
+
 abstract class AppDatabase : RoomDatabase() {
     abstract fun journalDao(): JournalDao
     abstract fun materialDao(): MaterialDao
     abstract fun regimeDao(): RegimeDao
     abstract fun auditDao(): AuditDao
+    abstract fun userDao(): UserDao
     abstract fun metaDao(): MetaDao
 
     companion object {
@@ -227,6 +304,10 @@ abstract class AppDatabase : RoomDatabase() {
             // (SlurryApp), главный поток блокируется только короткими чтениями после StartupGate.
             return Room.databaseBuilder(appContext, AppDatabase::class.java, name)
                 .allowMainThreadQueries()
+                // этап 1f: миграции v2→v3 явные; destructive — только как последний страховочный
+                // вариант для несовместимых будущих схем (данные журнала при этом теряются,
+                // поэтому до 1f включали fallback — оставляем, но добавляем addMigrations).
+                .addMigrations(V2ToV3())
                 .fallbackToDestructiveMigration()
                 .build()
         }
