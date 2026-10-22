@@ -554,7 +554,7 @@ private fun SettingsDialog(
 // ============================ общие виджеты ============================
 
 @Composable
-private fun SectionCard(title: String, content: @Composable () -> Unit) {
+internal fun SectionCard(title: String, content: @Composable () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
@@ -641,7 +641,7 @@ private fun InfoRow(label: String, value: String, valueColor: androidx.compose.u
 
 /** Чипы рядами по 2 — чтобы длинные названия умещались */
 @Composable
-private fun ChipFlow(names: List<String>, selected: String?, onSelect: (String) -> Unit) {
+internal fun ChipFlow(names: List<String>, selected: String?, onSelect: (String) -> Unit) {
     names.chunked(2).forEach { rowItems ->
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
