@@ -12,8 +12,8 @@ android {
         applicationId = "com.slurrycalc"
         minSdk = 26
         targetSdk = 34
-        versionCode = 9
-        versionName = "1.4.2"
+        versionCode = 10
+        versionName = "1.5.0"
     }
 
     buildTypes {
@@ -45,6 +45,10 @@ android {
         arg("room.schemaLocation", "$projectDir/schemas")
         arg("room.incremental", "true")
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -66,6 +70,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20231013")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.1")
     androidTestImplementation("androidx.room:room-testing:$roomVersion")
