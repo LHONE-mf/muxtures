@@ -9,17 +9,15 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import com.slurrycalc.data.DataHolder
 import com.slurrycalc.domain.BatchMath
 import com.slurrycalc.domain.BuiltinRegimes
 import com.slurrycalc.domain.JournalEntry
-import com.slurrycalc.domain.JournalStore
 import com.slurrycalc.domain.MaterialEntry
 import com.slurrycalc.domain.MaterialRole
-import com.slurrycalc.domain.MaterialsDb
 import com.slurrycalc.domain.MixToolType
 import com.slurrycalc.domain.MixingSequences
 import com.slurrycalc.domain.MixingStep
-import com.slurrycalc.domain.RegimeStore
 import com.slurrycalc.domain.SlurryEngine
 import com.slurrycalc.domain.SlurryResult
 import com.slurrycalc.domain.Solvent
@@ -45,9 +43,12 @@ class Settings(context: Context) {
 class SlurryViewModel(app: Application) : AndroidViewModel(app) {
 
     private val engine = SlurryEngine()
-    val materialsDb = MaterialsDb(app)
-    val journalStore = JournalStore(app)
-    val regimeStore = RegimeStore(app)
+    // этап 1e: хранилища переведены на Room (DataHolder инициализируется в SlurryApp.onCreate
+    // и гарантированно здесь — на случай создания VM раньше Application в тестах)
+    init { DataHolder.init(app) }
+    val materialsDb get() = DataHolder.materials
+    val journalStore get() = DataHolder.journal
+    val regimeStore get() = DataHolder.regimes
     val settings = Settings(app)
 
     // ---------- состав ----------
