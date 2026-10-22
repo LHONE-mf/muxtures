@@ -180,6 +180,9 @@ interface MetaDao {
 
     @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
     fun put(row: MetaRow)
+
+    @Query("DELETE FROM meta WHERE key = :key")
+    fun deleteKey(key: String): Int
 }
 
 // ============================ Database ============================

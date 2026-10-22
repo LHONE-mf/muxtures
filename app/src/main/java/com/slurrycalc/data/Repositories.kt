@@ -132,6 +132,10 @@ object DataHolder {
     var lastMigrationReport: MigrationEngine.Report? = null
         private set
 
+    /** был ли хотя бы раз выполнен перенос из prefs в Room (в т.ч. раньше) */
+    fun wasMigrated(db: AppDatabase): Boolean =
+        db.metaDao().get(MigrationEngine.FLAG_MIGRATED) != null
+
     fun init(context: Context) {
         if (db != null) return
         synchronized(this) {
@@ -144,6 +148,23 @@ object DataHolder {
             materials = MaterialsRepository(database)
             regimes = RegimeRepository(database)
         }
+    }
+
+    /**
+     * Явное удаление старых SharedPreferences после подтверждения пользователя
+     * (этап 1e). Разрешено только если миграция уже выполнялась; иначе данные
+     * prefs ещё не перенесены и удалять их нельзя.
+     */
+    fun purgeLegacyPrefs(context: Context): MigrationEngine.PurgeReport? {
+        val database = db ?: return null
+        if (!wasMigrated(database)) return null
+        val report = MigrationEngine.purgeLegacyPrefs(context)
+        try {
+            database.metaDao().put(
+                MetaRow("prefs_purged_at", "${System.currentTimeMillis()}"),
+            )
+        } catch (_: Exception) { }
+        return report
     }
 
     fun ready(): Boolean = db != null

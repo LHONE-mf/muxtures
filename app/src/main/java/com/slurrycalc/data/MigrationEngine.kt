@@ -193,6 +193,49 @@ object MigrationEngine {
     private fun convertSteps(o: JSONObject): String =
         (o.optJSONArray("steps") ?: JSONArray()).toString()
 
+    /**
+     * Удаление старых SharedPreferences (journal.db / materials.db / regimes.db).
+     * Вызывается ТОЛЬКО после того, как пользователь проверил перенесённые данные
+     * и явно подтвердил удаление (этап 1e). Перед удалением делается финальный
+     * резервный JSON-слепок в filesDir/backup.
+     */
+    data class PurgeReport(val removedFiles: List<String>, val finalBackupFile: String?, val errors: List<String>)
+
+    fun purgeLegacyPrefs(context: Context): PurgeReport {
+        val errors = mutableListOf<String>()
+        val names = listOf("journal.db", "materials.db", "regimes.db")
+
+        // финальный слепок остатков перед удалением
+        var backupPath: String? = null
+        try {
+            val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+            val dir = File(context.filesDir, "backup").apply { mkdirs() }
+            val out = JSONObject().apply { put("exportedAt", System.currentTimeMillis()); put("purpose", "final snapshot before prefs purge") }
+            for (n in names) {
+                val p = context.getSharedPreferences(n, Context.MODE_PRIVATE)
+                val obj = JSONObject()
+                for ((k, v) in p.all) obj.put(k, v?.toString() ?: JSONObject.NULL)
+                out.put(n, obj)
+            }
+            val file = File(dir, "prefs-final-snapshot-$stamp.json")
+            file.writeText(out.toString(2))
+            backupPath = file.absolutePath
+        } catch (e: Exception) {
+            errors.add("final-backup: ${e.message}")
+        }
+
+        val removed = mutableListOf<String>()
+        for (n in names) {
+            try {
+                if (context.deleteSharedPreferences(n)) removed.add(n)
+                else errors.add("$n: deleteSharedPreferences вернул false")
+            } catch (e: Exception) {
+                errors.add("$n: ${e.message}")
+            }
+        }
+        return PurgeReport(removed, backupPath, errors)
+    }
+
     /** Создать временную БД для теста миграции (instrumentation-тест, файл в cacheDir). */
     fun openTestDb(context: Context): AppDatabase =
         AppDatabase.openForTest(

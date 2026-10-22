@@ -73,6 +73,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
+import com.slurrycalc.data.DataHolder
 import com.slurrycalc.domain.BatchMath
 import com.slurrycalc.domain.BuiltinRegimes
 import com.slurrycalc.domain.JournalEntry
@@ -468,6 +469,8 @@ private fun SettingsDialog(
     onFontScale: (Float) -> Unit,
 ) {
     if (!open) return
+    var purgeMsg by remember { mutableStateOf<String?>(null) }
+    var purgeDone by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Оформление") },
@@ -497,6 +500,51 @@ private fun SettingsDialog(
                 Text("Крупнее — текст подписей и подсказок переносится по словам, поля остаются читаемыми.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                // ---- этап 1e: очистка legacy SharedPreferences (только после подтверждения) ----
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                val app = com.slurrycalc.appContext()
+                val migrated = remember { mutableStateOf<Boolean?>(null) }
+                LaunchedEffect(Unit) {
+                    migrated.value = try {
+                        if (DataHolder.ready()) DataHolder.wasMigrated(com.slurrycalc.data.AppDatabase.get(app)) else null
+                    } catch (_: Exception) { null }
+                }
+                Text("Старые данные (SharedPreferences)", style = MaterialTheme.typography.titleSmall)
+                when {
+                    purgeDone -> Text("Удалено. Финальный слепок сохранён в backup/, миграция не повторится.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary)
+                    migrated.value == false -> Text("Миграция ещё не выполнялась — удалять старые данные нельзя.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                    else -> {
+                        Text(
+                            "После перехода на Room старые копии хранятся «на всякий случай». " +
+                                "Удаляйте только если проверили, что Журнал и Материалы целы: " +
+                                "перед удалением будет сделан финальный JSON-слепок.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        var confirmPurge by remember { mutableStateOf(false) }
+                        if (!confirmPurge) {
+                            OutlinedButton(onClick = { confirmPurge = true }) { Text("Удалить старые данные…") }
+                        } else {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Button(onClick = {
+                                    val r = DataHolder.purgeLegacyPrefs(app)
+                                    purgeMsg = if (r == null) "Миграция не подтверждена — удаление отменено."
+                                    else if (r.errors.isEmpty()) "Удалено: ${r.removedFiles.joinToString()}"
+                                    else "Удалено частично: ${r.errors.joinToString("; ")}"
+                                    purgeDone = r != null && r.errors.isEmpty()
+                                    confirmPurge = false
+                                }) { Text("Подтвердить удаление") }
+                                TextButton(onClick = { confirmPurge = false }) { Text("Отмена") }
+                            }
+                            if (purgeMsg != null) Text(purgeMsg!!, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } },
