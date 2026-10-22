@@ -202,15 +202,19 @@ abstract class AppDatabase : RoomDatabase() {
                 instance ?: build(context.applicationContext, DB_NAME).also { instance = it }
             }
 
-        /** отдельная база для теста миграции (файл в cacheDir — изолированно от боевой) */
         fun openForTest(context: Context, file: java.io.File): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, file.absolutePath)
                 .allowMainThreadQueries()
                 .build()
 
-        internal fun build(appContext: Context, name: String): AppDatabase =
-            Room.databaseBuilder(appContext, AppDatabase::class.java, name)
+        internal fun build(appContext: Context, name: String): AppDatabase {
+            // allowMainThreadQueries — временная мера для синхронного UI-слоя; БД маленькая,
+            // все запросы < 1 мс. Инициализация/миграция при этом выполняется на ФОНОВОЙ нити
+            // (SlurryApp), главный поток блокируется только короткими чтениями после StartupGate.
+            return Room.databaseBuilder(appContext, AppDatabase::class.java, name)
+                .allowMainThreadQueries()
                 .fallbackToDestructiveMigration()
                 .build()
+        }
     }
 }

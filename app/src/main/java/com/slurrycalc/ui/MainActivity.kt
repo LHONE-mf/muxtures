@@ -72,6 +72,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import com.slurrycalc.domain.BatchMath
 import com.slurrycalc.domain.BuiltinRegimes
 import com.slurrycalc.domain.JournalEntry
@@ -118,38 +119,121 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
         try {
             setContent {
-                val vm: SlurryViewModel = viewModel()
-                var themeMode by remember { mutableStateOf(vm.settings.themeMode) }
-                var fontScale by remember { mutableStateOf(vm.settings.fontScale) }
-                SlurryTheme(mode = themeMode, fontScale = fontScale) {
-                    SlurryScreen(
-                        vm, onTheme = { themeMode = it }, onFontScale = { fontScale = it },
-                        onShareText = ::shareText,
-                        onPickTaskFile = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
-                        onExportFile = { name, text ->
-                            pendingExport = name to text
-                            exportLauncher.launch(name)
-                        },
-                        taskIncoming = pendingTask,
-                        onTaskConfirmed = { raw ->
-                            try {
-                                vm.importTask(TaskTransfer.parseIncoming(raw))
-                                pendingTask = null
-                                tabRequestJournal = true
-                            } catch (ex: Exception) {
-                                pendingTaskError = ex.message ?: "Не удалось прочитать задание"
-                            }
-                        },
-                        onTaskDismiss = { pendingTask = null; pendingTaskError = "" },
-                        taskError = pendingTaskError,
-                        openJournal = tabRequestJournal,
-                        onJournalOpened = { tabRequestJournal = false },
-                    )
+                // Сплэш-гейт: ждём завершения фоновой инициализации БД (миграция prefs->Room),
+                // чтобы ни один запрос к Room/репозиториям не случился на главном потоке до готовности.
+                var ready by remember { mutableStateOf(com.slurrycalc.data.DataHolder.ready()) }
+                var err by remember { mutableStateOf(com.slurrycalc.StartupState.error) }
+                LaunchedEffect(Unit) {
+                    while (!com.slurrycalc.data.DataHolder.ready() && com.slurrycalc.StartupState.error == null) {
+                        delay(50)
+                    }
+                    ready = true
+                    err = com.slurrycalc.StartupState.error
+                }
+                val errNow = err
+                if (errNow != null) {
+                    StartupErrorScreen(errNow)
+                } else if (!ready || !com.slurrycalc.data.DataHolder.ready()) {
+                    SplashScreen()
+                } else {
+                    val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as android.app.Application
+                    // показываем stacktrace предыдущего падения (если был crash.log)
+                    val crash = remember {
+                        try {
+                            val f = java.io.File(app.filesDir, "crash.log")
+                            if (f.exists()) { val s = f.readText(); f.delete(); s.take(4000) } else null
+                        } catch (_: Throwable) { null }
+                    }
+                    if (crash != null) {
+                        StartupErrorScreen("Прошлое завершение приложения было аварийным:\n$crash")
+                    } else {
+                        MainApp(app)
+                    }
                 }
             }
         } catch (e: Throwable) {
             Log.e("SlurryCalc", "UI init failed", e)
             showFatalError(e)
+        }
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun MainApp(app: android.app.Application) {
+        val vm: SlurryViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+            key = "slurryVm",
+            factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                    @Suppress("UNCHECKED_CAST")
+                    return SlurryViewModel(app) as T
+                }
+            },
+        )
+        var themeMode by androidx.compose.runtime.remember { mutableStateOf(vm.settings.themeMode) }
+        var fontScale by androidx.compose.runtime.remember { mutableStateOf(vm.settings.fontScale) }
+        SlurryTheme(mode = themeMode, fontScale = fontScale) {
+            SlurryScreen(
+                vm, onTheme = { themeMode = it }, onFontScale = { fontScale = it },
+                onShareText = ::shareText,
+                onPickTaskFile = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
+                onExportFile = { name, text ->
+                    pendingExport = name to text
+                    exportLauncher.launch(name)
+                },
+                taskIncoming = pendingTask,
+                onTaskConfirmed = { raw ->
+                    try {
+                        vm.importTask(TaskTransfer.parseIncoming(raw))
+                        pendingTask = null
+                        tabRequestJournal = true
+                    } catch (ex: Exception) {
+                        pendingTaskError = ex.message ?: "Не удалось прочитать задание"
+                    }
+                },
+                onTaskDismiss = { pendingTask = null; pendingTaskError = "" },
+                taskError = pendingTaskError,
+                openJournal = tabRequestJournal,
+                onJournalOpened = { tabRequestJournal = false },
+            )
+        }
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun SplashScreen() {
+        androidx.compose.material3.Surface(
+            color = androidx.compose.material3.MaterialTheme.colorScheme.background,
+            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+        ) {
+            androidx.compose.foundation.layout.Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+            ) {
+                androidx.compose.material3.CircularProgressIndicator()
+                androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.height(16.dp))
+                androidx.compose.material3.Text("Инициализация базы данных…")
+            }
+        }
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun StartupErrorScreen(message: String) {
+        androidx.compose.material3.Surface(
+            color = androidx.compose.material3.MaterialTheme.colorScheme.background,
+            modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+        ) {
+            androidx.compose.foundation.layout.Column(
+                modifier = androidx.compose.ui.Modifier.fillMaxSize().padding(24.dp),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+            ) {
+                androidx.compose.material3.Text(
+                    "Не удалось подготовить базу данных",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                androidx.compose.material3.Text(message, style = MaterialTheme.typography.bodySmall)
+                Spacer(modifier = Modifier.height(16.dp))
+                androidx.compose.material3.Button(onClick = { recreate() }) { Text("Перезапустить") }
+            }
         }
     }
 

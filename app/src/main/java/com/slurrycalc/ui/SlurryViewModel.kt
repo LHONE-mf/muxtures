@@ -43,9 +43,11 @@ class Settings(context: Context) {
 class SlurryViewModel(app: Application) : AndroidViewModel(app) {
 
     private val engine = SlurryEngine()
-    // этап 1e: хранилища переведены на Room (DataHolder инициализируется в SlurryApp.onCreate
-    // и гарантированно здесь — на случай создания VM раньше Application в тестах)
-    init { DataHolder.init(app) }
+    // этап 1e: хранилища переведены на Room. Инициализация выполняется фоновой нитью
+    // приложения (SlurryApp -> DataHolder.init). Здесь — синхронная страховка только для
+    // instrumented-тестов, где VM может быть создана без инициализации Application.
+    // В UI доступ к репозиториям происходит после StartupGate (см. MainActivity).
+    init { if (!DataHolder.ready()) DataHolder.init(app) }
     val materialsDb get() = DataHolder.materials
     val journalStore get() = DataHolder.journal
     val regimeStore get() = DataHolder.regimes
