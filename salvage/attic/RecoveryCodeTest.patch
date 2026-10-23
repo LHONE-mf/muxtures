@@ -1,0 +1,34 @@
+diff --git a/app/src/test/java/com/slurrycalc/calc/RecoveryCodeTest.kt b/app/src/test/java/com/slurrycalc/calc/RecoveryCodeTest.kt
+index 7eae7b7..615d41c 100644
+--- a/app/src/test/java/com/slurrycalc/calc/RecoveryCodeTest.kt
++++ b/app/src/test/java/com/slurrycalc/calc/RecoveryCodeTest.kt
+@@ -8,8 +8,10 @@ import org.junit.Test
+ 
+ /**
+  * B0-б: тесты кода восстановления администратора (A3).
+- * Формат: 5 групп по 5 символов алфавита без похожих знаков (I/O/0/1/L убраны не были —
+- * проверено: в алфавите нет I, O, 0, 1). Ёмкость log2(32^25) ≈ 125 бит.
++ * Формат: 5 групп по 5 символов = 25 символов алфавита из 32 знаков без похожих
++ * (I, O, 0, 1 отсутствуют; L оставлен как различимый). Энтропия = 25·log2(32) = 125 бит.
++ * Историческая оговорка «XXXX-XXXX-XXXX = 12 символов / 118 бит» относилась к старой
++ * схеме 4×3 и удалена: код никогда не был 12-символьным, расхождения нет.
+  */
+ class RecoveryCodeTest {
+ 
+@@ -32,10 +34,14 @@ class RecoveryCodeTest {
+         }
+     }
+ 
+-    @Test fun `ёмкость кода не менее 118 бит`() {
++    @Test fun `энтропия кода ровно 125 бит и не ниже 80`() {
++        // честный расчёт: длина 25 символов, алфавит 32 знака -> 25*log2(32) = 125 бит
++        assertEquals("длина компактного кода", 25, PinHash.normalizeRecoveryInput(PinHash.generateRecoveryCode()).length)
++        assertEquals("размер алфавита", 32, PinHash.RECOVERY_ALPHABET.length)
+         val bits = PinHash.RECOVERY_GROUPS * PinHash.RECOVERY_GROUP_LEN *
+             (Math.log(PinHash.RECOVERY_ALPHABET.length.toDouble()) / Math.log(2.0))
+-        assertTrue("ёмкость ${bits.toInt()} бит < 118", bits >= 118.0)
++        assertEquals("энтропия бит", 125.0, bits, 1e-9)
++        assertTrue("энтропия ${bits.toInt()} бит должна быть >= 80", bits >= 80.0)
+     }
+ 
+     @Test fun `round-trip - верный код проходит проверку хэша`() {

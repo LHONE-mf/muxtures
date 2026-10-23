@@ -1,0 +1,26 @@
+{
+  "format": "slurry-task",
+  "version": 1,
+  "title": "Катод NMC622 2кг СО50%",
+  "ts": 1761200400000,
+  "recipe": "NMC 622 96.0 / Super P / Carbon Black 2.0 / PVDF (сухое) 2.0 @ NMP (25 °C), СО 50.0 %",
+  "dryContentPct": 50.0,
+  "wetMassG": 2000.0,
+  "components": [
+    { "name": "NMC 622", "density": 4.67, "plannedMassG": 960.0 },
+    { "name": "Super P / Carbon Black", "density": 1.95, "plannedMassG": 20.0 },
+    { "name": "PVDF (сухое)", "density": 1.77, "plannedMassG": 20.0 }
+  ],
+  "solventName": "NMP (25 °C)",
+  "solventDensity": 1.028,
+  "solventPlannedMassG": 1000.0,
+  "regime": "planetary_std",
+  "durationMin": 30,
+  "mixNotes": "Вводить сажу постепенно; контроль T° ≤ 60 °C",
+  "steps": [
+    { "action": "Растворение PVDF в NMP", "tool": "MAGNETIC", "dispr": null, "blader": null, "dur": 40, "temp": 25.0, "vac": false, "cmt": "PVDF всыпать тонкой струйкой, перемешивать до полного растворения (без гелей)" },
+    { "action": "Ввод Super P", "tool": "PLANETARY", "dispr": 2500, "blader": 800, "dur": 15, "temp": 30.0, "vac": false, "cmt": "Сажу вводить порциями, каждые 5 мин соскребать стенки" },
+    { "action": "Ввод NMC 622", "tool": "PLANETARY", "dispr": 2500, "blader": 800, "dur": 25, "temp": 40.0, "vac": false, "cmt": "AM всыпать в 3 приёма; финальный перемес до однородности" },
+    { "action": "Дегазация", "tool": "VACUUM", "dispr": null, "blader": null, "dur": 10, "temp": null, "vac": true, "cmt": "Вакуум < -0.08 МПа при медленном помешивании" }
+  ]
+}

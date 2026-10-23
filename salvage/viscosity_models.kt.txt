@@ -1,0 +1,159 @@
+// ==== S00 salvage: код оценки вязкости по объёмной доле твёрдого (СНЯТО С КОДА, коммит c38d1eb) ====
+// Источники:
+//  - app/src/main/java/com/slurrycalc/calc/SlurryCalc.kt (строки 1-25 — параметры и enum;
+//    строки 113-146 — выбор модели и расчёт ηrel/η)
+//  - app/src/main/java/com/slurrycalc/calc/Rheology.kt (степенная модель, подгонка, Hegman)
+
+package com.slurrycalc.calc
+
+import kotlin.math.exp
+import kotlin.math.pow
+
+/**
+ * Расчёт партии суспензии (модель объёмов смешения + оценки вязкости дисперсной фазы).
+ * Чистый Kotlin. Единицы calc-слоя: массы — мг (Long), вязкость — Па·с, плотность — кг/м³.
+ * (Перенесено из domain/SlurryEngine на этап 1d; перевод г↔мг и мПа·с↔Па·с — на границе UI.)
+ */
+
+enum class ViscosityModel { NONE, MO, MARON_PIERIS, KRIEGER_DOUGHERTY }
+
+object ViscosityParams {
+    /** Марон–Пирис: ηrel = (1 − kφ)^−2, разумна при kφ < 0.85 */
+    const val MARON_K_DEFAULT = 2.5
+    /** Кригер–Догерти: ηrel = (1 − φ/φm)^−k, k = 2.5, φm ≈ 0.61–0.74 */
+    const val KD_K = 2.5
+    const val KD_PHI_MAX = 0.71
+    /** Муни: ηrel = exp(2.5·φ/(1 − φ/φm)) */
+    const val MO_A = 2.5
+    const val MO_PHI_MAX = 0.71
+}
+
+data class DryComponent(val name: String, val densityKgM3: Double, val fraction: Double)
+data class Medium(val name: String, val densityKgM3: Double, val viscosityPas: Double)
+
+data class BatchInput(
+    val solids: List<DryComponent>,
+    val solvent: Medium,
+... // (BatchInput/BatchResult — см. полный файл в bundle)
+        val slurryDensity = wetMassMg * 1e-3 / totalVolumeMl * 1000.0 // кг/м³
+
+        // Оценка вязкости (мПа·с внутри расчёта → Па·с в результате)
+        val phiMaxMo = ViscosityParams.MO_PHI_MAX
+        val phiMaxKd = ViscosityParams.KD_PHI_MAX
+        val (relEta, modelWarn) = when (input.viscosityModel) {
+            ViscosityModel.NONE -> null to null
+            ViscosityModel.MO ->
+                if (phi >= phiMaxMo) null to "φ ≥ ${"%.0f".format(phiMaxMo * 100)} % — модель Муни неприменима (запредельная упаковка)"
+                else exp(ViscosityParams.MO_A * phi / (1.0 - phi / phiMaxMo)) to null
+            ViscosityModel.MARON_PIERIS -> {
+                val kPhi = input.maronK * phi
+                val w = if (kPhi >= 0.85) "Марон–Пирис за пределами применимости (kφ ≥ 0.85) — оценка занижена/некорректна" else null
+                if (kPhi >= 1.0) null to w
+                else (1.0 - kPhi).pow(-2.0) to w
+            }
+            ViscosityModel.KRIEGER_DOUGHERTY ->
+                if (phi >= phiMaxKd) null to "φ ≥ ${"%.0f".format(phiMaxKd * 100)} % — модель Кригера–Догерти неприменима"
+                else (1.0 - phi / phiMaxKd).pow(-ViscosityParams.KD_K) to null
+        }
+        modelWarn?.let { warnings.add(it) }
+
+        val etaMPas = relEta?.let { (input.solvent.viscosityPas * 1000.0) * it }
+        val etaPas = relEta?.let { input.solvent.viscosityPas * it }
+        if (etaMPas != null && etaMPas > 5000) warnings.add(
+            "Оценка η ≈ " + String.format(java.util.Locale.US, "%.0f", etaMPas) +
+                " мПа·с — выше типовой наноспособности (~1000–5000 мПа·с); снижайте СО или меняйте режим диспергирования"
+        )
+        if (phi > 0.65) warnings.add(
+            "Высокая объёмная доля твёрдой фазы (φ = " +
+                String.format(java.util.Locale.US, "%.0f", phi * 100) +
+                " %) — суспензия может быть трудноразливаемой"
+        )
+
+        return Result.success(BatchResult(
+            dryMassMg = dryMassMg,
+
+// ==== Rheology.kt целиком ====
+package com.slurrycalc.calc
+
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.pow
+
+/**
+ * Реометрия: степенная модель (Power Law / Оствальда–де Валя) и её подгонка,
+ * а также конвертация тонкого помола (Hegman ↔ мкм). Чистый Kotlin.
+ *
+ * Единицы SPEC-соглашения: вязкость η в Па·с, скорость сдвига γ̇ в с⁻¹.
+ */
+object Rheology {
+
+    /** η = K · γ̇^(n−1). Возвращает η [Па·с]; K [Па·с^n], n — индекс течения. */
+    fun powerLawEta(k: Double, n: Double, shearRate: Double): Double {
+        require(shearRate > 0) { "Скорость сдвига должна быть > 0" }
+        require(k > 0) { "K должен быть > 0" }
+        return k * shearRate.pow(n - 1.0)
+    }
+
+    data class FitResult(val k: Double, val n: Double, val r2: Double, val points: Int)
+
+    /**
+     * МНК-подгонка в логарифмах: ln η = ln K + (n−1)·ln γ̇.
+     * Точки с non-finite или <=0 значениями отбрасываются; нужно минимум 2 точки.
+     */
+    fun fitPowerLaw(shearRates: List<Double>, viscositiesPas: List<Double>): Result<FitResult> {
+        if (shearRates.size != viscositiesPas.size)
+            return Result.failure(IllegalArgumentException("Массивы γ̇ и η разной длины"))
+        val pts = shearRates.zip(viscositiesPas).filter { (g, e) ->
+            g.isFinite() && e.isFinite() && g > 0 && e > 0
+        }
+        if (pts.size < 2) return Result.failure(IllegalArgumentException("Нужно минимум 2 валидные точки"))
+
+        val xs = pts.map { ln(it.first) }
+        val ys = pts.map { ln(it.second) }
+        val m = xs.size
+        val sx = xs.sum(); val sy = ys.sum()
+        val sxx = xs.sumOf { it * it }; val sxy = xs.indices.sumOf { xs[it] * ys[it] }
+        val denom = m * sxx - sx * sx
+        if (abs(denom) < 1e-12) return Result.failure(IllegalArgumentException("Вырожденный набор точек (одинаковые γ̇)"))
+        val slope = (m * sxy - sx * sy) / denom
+        val intercept = (sy - slope * sx) / m
+        val n = slope + 1.0
+        val k = exp(intercept)
+
+        // R² в логарифмическом пространстве
+        val yMean = sy / m
+        val ssTot = ys.sumOf { (it - yMean) * (it - yMean) }
+        val ssRes = xs.indices.sumOf { i ->
+            val pred = intercept + slope * xs[i]
+            (ys[i] - pred) * (ys[i] - pred)
+        }
+        val r2 = if (ssTot > 0) 1.0 - ssRes / ssTot else 1.0
+
+        return Result.success(FitResult(k = k, n = n, r2 = r2, points = m))
+    }
+
+    /** Конверсия тонкого помола: Hegman gauge 0..8 ↔ размер частиц ~0..100 мкм (линейная шкала). */
+    fun hegmanToMicron(hegman: Double): Double {
+        require(hegman in 0.0..8.0) { "Hegman вне диапазона 0..8" }
+        return (8.0 - hegman) * 12.5
+    }
+
+    fun micronToHegman(microns: Double): Double {
+        require(microns in 0.0..100.0) { "Размер вне диапазона 0..100 мкм" }
+        return 8.0 - microns / 12.5
+    }
+}
+
+// ==== СПИСОК ПАРАМЕТРОВ С ЕДИНИЦАМИ ====
+// phi            — объёмная доля твёрдой фазы, безразмерная (0..1)
+// eta_rel        — относительная вязкость, безразмерная
+// eta_solvent    — вязкость растворителя, Па·с (UI показывает мПа·с)
+// eta_slurry     — оценка вязкости суспензии, Па·с
+// MO_A=2.5, MO_PHI_MAX=0.71      — Муни: eta_rel = exp(2.5*phi/(1-phi/0.71))
+// MARON_K_DEFAULT=2.5            — Марон–Пирис: eta_rel = (1-k*phi)^-2, применима k*phi<0.85
+// KD_K=2.5, KD_PHI_MAX=0.71      — Кригер–Догерти: eta_rel = (1-phi/0.71)^-2.5
+// K              — индекс консистентности степенной модели, Па·с^n
+// n              — индекс течения, безразмерный (<1 — псевдопластик)
+// shearRate      — скорость сдвига, с^-1
+// hegman         — гарден Hegman 0..8; micron = (8-hegman)*12.5
